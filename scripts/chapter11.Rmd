@@ -1,0 +1,506 @@
+---
+title: "Chapter 11 - Norming the Senses"
+author: "Bodo Winter"
+date: "8/24/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This is the analysis script for Chapter 11, the first empirical chapter using data. This analysis mostly sets the ground for the other analyses in later chapters, providing a first look at the Lynott and Connell (2009) norms and some comparisons to other norm datasets.
+
+We begin by loading in the data and libraries.
+
+```{r packages_data, message = FALSE}
+## Libraries:
+
+library(tidyverse)
+library(stringr)
+
+## Load data:
+
+lyn <- read_csv('../raw-data/modality_lynott_connell_2009.csv')
+sens <- read_csv('../raw-data/sensicon_tekiroglu_2014.csv')
+strik <- read_csv('../raw-data/modality_strik_lievers_2015.csv')
+dan <- read_csv('../raw-data/van_dantzig_2011_adjective_norms.csv')
+noun <- read_csv('../raw-data/modality_lynott_connell_2013.csv')
+SUBTLEX <- read_csv('../raw-data/frequency_SUBTLEX_POS.csv')
+```
+
+Some more preprocessing:
+
+```{r preprocessing}
+## Vector of modality names:
+
+mymods <- c('Visual', 'Haptic', 'Auditory',
+            'Gustatory', 'Olfactory')
+
+## Load plotting functions:
+
+source('../functions/plot_density.R')
+source('../functions/emptyplot.R')
+```
+
+Check the words "yellow" and "harsh" for reporting.
+
+```{r yellow_harsh}
+## Yellow:
+
+filter(lyn, Word == 'yellow') %>%
+  select(VisualStrengthMean:ModalityExclusivity) %>%
+  print(width = Inf)
+
+## Harsh:
+
+filter(lyn, Word == 'harsh') %>%
+  select(VisualStrengthMean:ModalityExclusivity) %>%
+  print(width = Inf)
+```
+
+Check the most and least exclusive:
+
+```{r most_least_exclusive}
+## Least exclusive:
+
+arrange(lyn, ModalityExclusivity)
+
+## Most exclusive:
+
+arrange(lyn, desc(ModalityExclusivity))
+```
+
+## Plot of average exclusivity
+
+This is figure 2 in the book, which shows the distribution of exclusivities across the whole set of adjectives.
+
+```{r excl_plot}
+text_height_factor <- 0.15
+cex_text <- 1.5
+quartz('', 9, 6)
+par(mai = c(1.5, 1.75, 1, 1))
+emptyplot(xlim = c(-0.05, 1.05), ylim = c(0, 3),
+          yaxs = 'i', AB = '', yfactor = 0.07)	
+plot_density(lyn$ModalityExclusivity,
+             mean = TRUE, this_color = 'lightgray')
+axis(side = 1, at = seq(0, 1, 0.25),
+     labels = str_c(seq(0, 100, 25), '%'), font = 2,
+     lwd = 2, lwd.ticks = 2, cex.axis = 1.25)
+mtext(side = 1, text = 'Modality Exclusivity',
+      line = 3.6, cex = 2, font = 2)
+axis(side = 2, at = seq(0, 3, 0.5), font = 2,
+	lwd = 2, lwd.ticks = 2, cex.axis = 1.25, las = 2)
+mtext(side = 2, text = 'Density',
+      line = 3.6, cex = 2, font = 2)
+## Add some labels:
+segments(x0 = 0.116, x1 = 0.05, y0 = 0.25, y1 = 0.8, lwd = 2)
+text(x = 0.05, y = 0.8 + text_height_factor,
+     labels = 'harsh', font = 4, cex = cex_text)
+segments(x0 = 0.951, x1 = 0.99, y0 = 0.25, y1 = 1.1, lwd = 2)
+text(x = 0.99, y = 1.1 + text_height_factor,
+     labels = 'yellow', font = 4, cex = cex_text)
+```
+
+## Adjectives versus nouns
+
+Average exclusivities for both:
+
+```{r avg_adj_noun_excl}
+mean(lyn$ModalityExclusivity)
+mean(noun$ModalityExclusivity)
+```
+
+Test of adjective versus noun exclusivity:
+
+```{r adj_vs_noun_excl}
+wilcox.test(lyn$ModalityExclusivity,
+            noun$ModalityExclusivity)
+```
+
+## Highest perceptual strength ratings
+
+Check the words with the highest perceptual strength ratings for each modality.
+
+```{r high_strength}
+arrange(lyn, desc(VisualStrengthMean)) %>% pull(Word) %>% head(1)
+arrange(lyn, desc(HapticStrengthMean)) %>% pull(Word) %>% head(1)
+arrange(lyn, desc(AuditoryStrengthMean)) %>% pull(Word) %>% head(1)
+arrange(lyn, desc(GustatoryStrengthMean)) %>% pull(Word) %>% head(1)
+arrange(lyn, desc(OlfactoryStrengthMean)) %>% pull(Word) %>% head(1)
+```
+
+## Problematic cases
+
+Discuss problematic cases.
+
+```{r brackish_clamorous}
+## Check norms for "brackish" and "clamorous"
+
+filter(lyn, Word == 'clamorous') %>% print(width = Inf)
+filter(lyn, Word == 'brackish') %>% print(width = Inf)
+
+```
+
+## Table of most frequent / infrequent:
+
+Let's check the most and least frequent word per modality (reported in Table 5).
+
+```{r adj_freq_expl}
+## Merge:
+
+lyn <- left_join(lyn, select(SUBTLEX, Word, FREQcount, Lg10WF))
+noun <- left_join(noun, select(SUBTLEX, Word, FREQcount, Lg10WF))
+
+## Most frequent:
+
+lyn %>% arrange(desc(Lg10WF)) %>%
+  filter(DominantModality == 'Visual') %>% head(2)
+lyn %>% arrange(desc(Lg10WF)) %>%
+  filter(DominantModality == 'Haptic') %>% head(2)
+lyn %>% arrange(desc(Lg10WF)) %>%
+  filter(DominantModality == 'Auditory') %>% head(2)
+lyn %>% arrange(desc(Lg10WF)) %>%
+  filter(DominantModality == 'Gustatory') %>% head(2)
+lyn %>% arrange(desc(Lg10WF)) %>%
+  filter(DominantModality == 'Olfactory') %>% head(2)
+
+## Least frequent:
+
+lyn %>% arrange(Lg10WF) %>%
+  filter(DominantModality == 'Visual') %>% head(2)
+lyn %>% arrange(Lg10WF) %>%
+  filter(DominantModality == 'Haptic') %>% head(2)
+lyn %>% arrange(Lg10WF) %>%
+  filter(DominantModality == 'Auditory') %>% head(2)
+lyn %>% arrange(Lg10WF) %>%
+  filter(DominantModality == 'Gustatory') %>% head(2)
+lyn %>% arrange(Lg10WF) %>%
+  filter(DominantModality == 'Olfactory') %>% head(2)
+
+```
+
+Repeat this for nouns:
+
+```{r noun_freq_expl}
+## Most frequent:
+
+noun %>% arrange(desc(Lg10WF)) %>%
+  filter(DominantModality == 'Visual') %>% head(2)
+noun %>% arrange(desc(Lg10WF)) %>%
+  filter(DominantModality == 'Haptic') %>% head(2)
+noun %>% arrange(desc(Lg10WF)) %>%
+  filter(DominantModality == 'Auditory') %>% head(2)
+noun %>% arrange(desc(Lg10WF)) %>%
+  filter(DominantModality == 'Gustatory') %>% head(2)
+noun %>% arrange(desc(Lg10WF)) %>%
+  filter(DominantModality == 'Olfactory') %>% head(2)
+
+## Least frequent:
+
+noun %>% arrange(Lg10WF) %>%
+  filter(DominantModality == 'Visual') %>% head(2)
+noun %>% arrange(Lg10WF) %>%
+  filter(DominantModality == 'Haptic') %>% head(2)
+noun %>% arrange(Lg10WF) %>%
+  filter(DominantModality == 'Auditory') %>% head(2)
+noun %>% arrange(Lg10WF) %>%
+  filter(DominantModality == 'Gustatory') %>% head(2)
+noun %>% arrange(Lg10WF) %>%
+  filter(DominantModality == 'Olfactory') %>% head(2)
+```
+
+## Table of most / least exclusive:
+
+And the most/least exclusive.
+
+```{r adj_excl_expl}
+## Most exclusive:
+
+lyn %>% arrange(desc(ModalityExclusivity)) %>%
+  filter(DominantModality == 'Visual') %>% head(2)
+lyn %>% arrange(desc(ModalityExclusivity)) %>%
+  filter(DominantModality == 'Haptic') %>% head(2)
+lyn %>% arrange(desc(ModalityExclusivity)) %>%
+  filter(DominantModality == 'Auditory') %>% head(2)
+lyn %>% arrange(desc(ModalityExclusivity)) %>%
+  filter(DominantModality == 'Gustatory') %>% head(2)
+lyn %>% arrange(desc(ModalityExclusivity)) %>%
+  filter(DominantModality == 'Olfactory') %>% head(2)
+
+## Least exclusive:
+
+lyn %>% arrange(ModalityExclusivity) %>%
+  filter(DominantModality == 'Visual') %>% head(2)
+lyn %>% arrange(ModalityExclusivity) %>%
+  filter(DominantModality == 'Haptic') %>% head(2)
+lyn %>% arrange(ModalityExclusivity) %>%
+  filter(DominantModality == 'Auditory') %>% head(2)
+lyn %>% arrange(ModalityExclusivity) %>%
+  filter(DominantModality == 'Gustatory') %>% head(2)
+lyn %>% arrange(ModalityExclusivity) %>%
+  filter(DominantModality == 'Olfactory') %>% head(2)
+```
+
+Same for nouns:
+
+```{r noun_excl_expl}
+## Most exclusive:
+
+noun %>% arrange(desc(ModalityExclusivity)) %>%
+  filter(DominantModality == 'Visual') %>% head(2)
+noun %>% arrange(desc(ModalityExclusivity)) %>%
+  filter(DominantModality == 'Haptic') %>% head(2)
+noun %>% arrange(desc(ModalityExclusivity)) %>%
+  filter(DominantModality == 'Auditory') %>% head(2)
+noun %>% arrange(desc(ModalityExclusivity)) %>%
+  filter(DominantModality == 'Gustatory') %>% head(2)
+noun %>% arrange(desc(ModalityExclusivity)) %>%
+  filter(DominantModality == 'Olfactory') %>% head(2)
+
+## Least exclusive:
+
+noun %>% arrange(ModalityExclusivity) %>%
+  filter(DominantModality == 'Visual') %>% head(2)
+noun %>% arrange(ModalityExclusivity) %>%
+  filter(DominantModality == 'Haptic') %>% head(2)
+noun %>% arrange(ModalityExclusivity) %>%
+  filter(DominantModality == 'Auditory') %>% head(2)
+noun %>% arrange(ModalityExclusivity) %>%
+  filter(DominantModality == 'Gustatory') %>% head(2)
+noun %>% arrange(ModalityExclusivity) %>%
+  filter(DominantModality == 'Olfactory') %>% head(2)
+```
+
+## Comparison to van Dantzig et al. (2011)
+
+In this section, we look at how much the Lynott & Connell (2009) norms correspond to the van Dantzig et al. (2011) norms.
+
+```{r correlations}
+## Merge
+
+lyndan <- left_join(lyn, dan, by = c('Word' = 'Word'))
+
+## Perform pairwise correlations per modality:
+
+cor.test(lyndan$VisualStrengthMean.x,
+         lyndan$VisualStrengthMean.y, use = 'complete.obs')
+cor.test(lyndan$HapticStrengthMean.x,
+         lyndan$HapticStrengthMean.y, use = 'complete.obs')
+cor.test(lyndan$AuditoryStrengthMean.x,
+         lyndan$AuditoryStrengthMean.y, use = 'complete.obs')
+cor.test(lyndan$GustatoryStrengthMean.x,
+         lyndan$GustatoryStrengthMean.y, use = 'complete.obs')
+cor.test(lyndan$OlfactoryStrengthMean.x,
+         lyndan$OlfactoryStrengthMean.y, use = 'complete.obs')
+cor.test(lyndan$ModalityExclusivity.x,
+         lyndan$ModalityExclusivity.y, use = 'complete.obs')
+```
+
+Correlations are really high, and that's even though van Dantzig et al. (2011) provided noun contexts.
+
+Let's do the same for Spearman's correlations (just to check, also because we can't assume that the distributional assumptions are met).
+
+```{r cor_spearman}
+cor.test(lyndan$VisualStrengthMean.x,
+         lyndan$VisualStrengthMean.y, use = 'complete.obs',
+         method = 'spearman')
+cor.test(lyndan$HapticStrengthMean.x,
+         lyndan$HapticStrengthMean.y, use = 'complete.obs',
+         method = 'spearman')
+cor.test(lyndan$AuditoryStrengthMean.x,
+         lyndan$AuditoryStrengthMean.y, use = 'complete.obs',
+         method = 'spearman')
+cor.test(lyndan$GustatoryStrengthMean.x,
+         lyndan$GustatoryStrengthMean.y, use = 'complete.obs',
+         method = 'spearman')
+cor.test(lyndan$OlfactoryStrengthMean.x,
+         lyndan$OlfactoryStrengthMean.y, use = 'complete.obs',
+         method = 'spearman')
+cor.test(lyndan$ModalityExclusivity.x,
+         lyndan$ModalityExclusivity.y, use = 'complete.obs',
+         method = 'spearman')
+```
+
+An even better and more holistic way to look at the correspondence between the two datasets is to check the cosine between the two modality vectors, i.e., how much do the five modality values of Lynott and Connell (2009) correspond to the five modality values of van Dantzig et al. (2011)?
+
+```{r cosines}
+## Load cosine similarity function:
+
+source('../functions/cosine_sim.R')
+
+## Loop word-wise and calculate cosines:
+
+lyndan$Cosine <- NA
+mymods_names <- str_c(mymods, 'StrengthMean')
+for (i in 1:nrow(lyndan)) {
+	lyn_vector <- unlist(lyndan[i, str_c(mymods_names, '.x')])
+	dan_vector <- unlist(lyndan[i, str_c(mymods_names, '.y')])
+	lyndan[i, ]$Cosine <- cosine_sim(lyn_vector, dan_vector)
+	}
+
+## What is the average cosine?
+
+mean(lyndan$Cosine, na.rm = TRUE)	# 0.97
+
+## What is the range?
+
+range(lyndan$Cosine, na.rm = TRUE)
+
+```
+
+Informally, let's check what are dominant modality classifications that differ between the two languages?
+
+```{r difference}
+filter(lyndan,
+       DominantModality.x != DominantModality.y) %>%
+	select(Word,
+	       DominantModality.x, DominantModality.y)
+
+## Confusion matrix:
+
+with(lyndan,
+     print(lyndan_tab <<- table(DominantModality.x,
+                                DominantModality.y)))
+
+## Overlap:
+
+sum(lyndan_tab)
+sum(diag(lyndan_tab)) / sum(lyndan_tab)
+
+```
+
+## Comparison to Strik Lievers (2015)
+
+Strik Lievers (2015) used a thesaurus and dictionaries to derive a list of sensory words.
+
+```{r srik_comp}
+lynstrik <- left_join(lyn, strik)
+
+## Confusion matrix:
+
+with(lynstrik,
+     print(lynstrik_tab <<- table(DominantModality, Modality)))
+
+## How much overlap?
+
+sum(lynstrik_tab) # 96 overlapping
+sum(diag(lynstrik_tab)) / sum(lynstrik_tab)
+
+```
+
+## Comparison to Tekiroglu et al. (2014) Sensicon
+
+Next, we compare the Lynott and Connell (2009) norms against the Sensicon.
+
+```{r correlations_sensicon}
+## Merge datasets:
+
+lynsens <- left_join(lyn, sens, by = c('Word' = 'Word'))
+
+## Perform correlations:
+
+with(lynsens,
+	cor.test(VisualStrength,
+	         VisualStrengthMean, use = 'complete.obs'))
+with(lynsens,
+	cor.test(TactileStrength,
+	         HapticStrengthMean, use = 'complete.obs'))
+with(lynsens,
+	cor.test(AuditoryStrength,
+	         AuditoryStrengthMean, use = 'complete.obs'))
+with(lynsens,
+	cor.test(GustatoryStrength,
+	         GustatoryStrengthMean, use = 'complete.obs'))
+with(lynsens,
+	cor.test(OlfactoryStrength,
+	         OlfactoryStrengthMean, use = 'complete.obs'))
+```
+
+Informally, we check mismatches in classifications again.
+
+```{r sensicon_misqual}
+## Confusion matrix:
+
+with(lynsens,
+     print(lynsens_tab <<- table(DominantModality,
+                                 Modality)))
+
+## Overlap:
+
+sum(lynsens_tab)
+sum(diag(lynsens_tab)) / sum(lynsens_tab)
+sum(lynsens_tab) - sum(diag(lynsens_tab))
+
+## Select some random non-overlappings for demo:
+
+nonoverlaps <- filter(lynsens, Modality != DominantModality) %>%
+  select(Word, Modality, DominantModality)
+set.seed(42)
+nonoverlaps[sample(1:nrow(nonoverlaps), 20), ]
+```
+
+The Sensicon modality values are corpus-based, which invites the concern that the modality values differ in quality by frequency. To explore the role of frequency, we use SUBTLEX.
+
+```{r freq_split}
+
+## Create frequency median split for simplicity's sake:
+
+lynsens <- left_join(lynsens,
+                     select(SUBTLEX, Word, Lg10WF))
+lynsens <- mutate(lynsens,
+	HighFrequency = ifelse(Lg10WF > median(Lg10WF, na.rm = TRUE),
+	                       'HF', 'LF'))
+
+## Split dataset into two for ease of discussion:
+
+LF <- filter(lynsens, HighFrequency == 'LF')
+HF <- filter(lynsens, HighFrequency == 'HF')
+
+## HF versus LF correlations between norms and Sensicon:
+
+# Sight:
+with(HF,
+	cor.test(VisualStrength,
+	         VisualStrengthMean, use = 'complete.obs'))
+with(LF,
+	cor.test(VisualStrength,
+	         VisualStrengthMean, use = 'complete.obs'))
+
+# Touch:
+with(HF,
+	cor.test(TactileStrength,
+	         HapticStrengthMean, use = 'complete.obs'))
+with(LF,
+	cor.test(TactileStrength,
+	         HapticStrengthMean, use = 'complete.obs'))
+
+# Sound:
+with(HF,
+	cor.test(AuditoryStrength, 
+	         AuditoryStrengthMean, use = 'complete.obs'))
+with(LF,
+	cor.test(AuditoryStrength,
+	         AuditoryStrengthMean, use = 'complete.obs'))
+
+# Taste:
+with(HF,
+	cor.test(GustatoryStrength,
+	         GustatoryStrengthMean, use = 'complete.obs'))
+with(LF,
+	cor.test(GustatoryStrength,
+	         GustatoryStrengthMean, use = 'complete.obs'))
+
+# Smell:
+with(HF,
+	cor.test(OlfactoryStrength,
+	         OlfactoryStrengthMean, use = 'complete.obs'))
+with(LF,
+	cor.test(OlfactoryStrength,
+	         OlfactoryStrengthMean, use = 'complete.obs'))
+```
+
+This completes the analyses presented in Chapter 11.
+

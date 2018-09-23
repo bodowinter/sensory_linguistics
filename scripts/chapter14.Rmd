@@ -1,0 +1,692 @@
+---
+title: "Chapter 14 - Semantic preference"
+author: "Bodo Winter"
+date: "8/24/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This is the analysis for Chapter 14, which is the first to combine the modality norms with a corpus, COCA (Davies, 2008-). Part I looks at overall "modality affinity" using cosine similarity in adjective-noun pairs. Part II looks at correlations between an adjective's modality and a noun's modality.
+
+We begin by loading in the data and libraries.
+
+```{r packages_data, message = FALSE}
+## Libraries:
+
+library(stringr)
+library(lme4)
+library(MuMIn)
+library(car)
+library(tidyverse)
+
+## Load data:
+
+lyn <- read_csv('../raw-data/modality_lynott_connell_2009.csv')
+noun <- read_csv('../raw-data/modality_lynott_connell_2013.csv')
+COCA <- read_csv('../raw-data/COCA_adj_noun.csv')
+```
+
+Some more preliminaries:
+
+```{r preprocessing}
+## Vector of modality names:
+
+mymods <- c('Visual', 'Haptic', 'Auditory',
+            'Gustatory', 'Olfactory')
+
+## Vector of column names:
+
+mymods_names <- str_c(mymods, 'StrengthMean')
+
+## Load plotting functions:
+
+source('../functions/emptyplot.R')
+source('../functions/plot_density.R')
+source('../functions/cosine_sim.R')
+
+## Create unique adjective-noun pair identifier:
+
+COCA <- mutate(COCA,
+	ID = str_c(Word, Noun, sep = ':'))
+```
+
+Check type and token counts:
+
+```{r type_tokens}
+nrow(COCA)
+sum(COCA$Freq)
+```
+
+Make a column that contains info about whether the noun is also in Lynott and Connell (2013) and check how many there are.
+
+```{r noun_match}
+## Make a column for whether nouns that are also in L&C 2013:
+
+COCA <- mutate(COCA,
+	LC2013 = ifelse(Noun %in% noun$Word, 'match', 'no_match'))
+
+## Check type and token counts:
+
+nrow(filter(COCA, LC2013 == 'match'))
+sum(filter(COCA, LC2013 == 'match')$Freq)
+```
+
+Create a superset that contains all possible adjective-noun combinations, to be compared with those that are actually attested.
+
+```{r adj_noun_superset}
+## Create super-set of all possible adjective-noun combinations:
+
+adj <- tibble(Word = rep(lyn$Word, each = nrow(noun)),
+              Noun = rep(noun$Word, times = nrow(lyn))) %>%
+  mutate(ID = str_c(Word, Noun, sep = ':'))
+
+## Create a column for whether it is attested or not:
+
+adj <- mutate(adj,
+              Attested = ifelse(ID %in% COCA$ID, 'yes', 'no'))
+```
+
+How many are attested and how many are unattested?
+
+```{r attested_sum}
+## Counts and percentages of attested versus unatteted:
+
+nrow(filter(adj, Attested == 'yes'))
+nrow(filter(adj, Attested == 'no'))
+nrow(filter(adj, Attested == 'yes')) / nrow(adj)
+nrow(filter(adj, Attested == 'no')) / nrow(adj)
+```
+
+Add the perceptual strengths of the adjective and the noun to this dataset.
+
+```{r mod_norms_add}
+## Add adjective perceptual strengths:
+
+colnames(lyn)[str_detect(colnames(lyn), 'StrengthMean')] <- str_c('Adj',
+	colnames(lyn)[str_detect(colnames(lyn), 'StrengthMean')])
+adj <- left_join(adj, lyn)
+
+## Add noun perceptual strengths:
+
+colnames(noun)[str_detect(colnames(noun), 'StrengthMean')] <- str_c('Noun',
+	colnames(noun)[str_detect(colnames(noun), 'StrengthMean')])
+adj <- left_join(adj, noun, by = c('Noun' = 'Word'))
+```
+
+And the token frequency of the adjective-noun pair that's attested in COCA for those that are attested (others will be NA).
+
+```{r freq_add}
+## Add COCA frequency to adj:
+
+adj$Freq <- COCA[match(adj$ID, COCA$ID), ]$Freq
+
+## Compute log frequency:
+
+adj <- mutate(adj, LogFreq = log10(Freq))
+```
+
+This will be the main dataset with which we work from now.
+
+## Computing cosines
+
+Here, we will compute the cosines and save this into a file:
+
+```{r cosine_compute, cache = TRUE}
+## Create empty cosine column to fill with modality fit:
+
+cosines <- rep(NA, nrow(adj))
+
+## Separate matrices into adjectives and nouns:
+
+adj_vecs <- adj[, grep('Adj(.)+StrengthMean', colnames(adj))]
+noun_vecs <- adj[, grep('Noun(.)+StrengthMean', colnames(adj))]
+adj_vecs <- as.matrix(adj_vecs)
+noun_vecs <- as.matrix(noun_vecs)
+
+## Loop through pairs and compute cosines:
+
+for (i in 1:nrow(adj)) {
+	cosines[i] <- cosine_sim(adj_vecs[i, ], noun_vecs[i, ])
+	# if (i %% 1000 == 0) {cat(paste(i, '\n'))}
+}
+
+## Put back into data frame:
+
+adj$Cosine <- cosines
+
+## Write to file:
+write_csv(adj, '../processed-data/combinations_with_cosines.csv')
+```
+
+Let's check a few exemplary values.
+
+```{r cosine_examples}
+## Extract relevant data frames:
+
+abrasive_contact <- filter(adj,
+                      Word == 'abrasive', Noun == 'contact')
+sweet_music <- filter(adj,
+                      Word == 'sweet', Noun == 'music')
+sweet_taste <- filter(adj,
+                      Word == 'sweet', Noun == 'taste')
+
+## This adjective, perceptual strength values:
+
+sweet_music[, grep('Adj(.)+StrengthMean', colnames(adj))] %>%
+  print(width = Inf)
+
+## The two nouns, perceptual strength values:
+
+sweet_music[, grep('Noun(.)+StrengthMean', colnames(adj))] %>%
+  print(width = Inf)
+sweet_taste[, grep('Noun(.)+StrengthMean', colnames(adj))] %>%
+  print(width = Inf)
+
+## What are the cosines?
+sweet_music$Cosine
+sweet_taste$Cosine
+
+## Look at "abrasive contact":
+
+abrasive_contact[, grep('Adj(.)+StrengthMean', colnames(adj))] %>%
+  print(width = Inf)
+abrasive_contact[, grep('Noun(.)+StrengthMean', colnames(adj))] %>%
+  print(width = Inf)
+abrasive_contact$Cosine
+```
+
+## Analysis of cosines
+
+How many data adjective-noun pairs are attested, compared to the unattesteds?
+
+```{r attested_count}
+## Get the counts:
+
+att_count <- adj %>%
+  group_by(Attested) %>%
+  count()
+
+## Check:
+
+att_count
+
+## How many in total?
+
+sum(att_count$n)
+
+## Percentage:
+
+att_count[2, ]$n / sum(att_count$n)
+```
+
+Let's start by checking summary statistics of the cosines that are attested versus those that are unattested. We then perform a Wilcoxon's signed rank test.
+
+```{r cosine_attested_comp}
+## Compare cosines of unattested and attested combinations:
+
+aggregate(Cosine ~ Attested, adj, mean)
+aggregate(Cosine ~ Attested, adj, sd)
+aggregate(Cosine ~ Attested, adj, median)
+
+## Perform Wilcox test:
+
+wilcox.test(Cosine ~ Attested, adj)
+```
+
+Let's make a plot of the distribution of cosines for attested versus unattested pairs:
+
+```{r cosine_attested_plots, fig.width = 10, fig.height = 5}
+## Make a plot of the exclusivity distributions:
+
+quartz('', 11, 4)
+par(mfrow = c(1,2),
+    mai = c(0.25, 0.25, 0.25, 0.25),
+    omi = c(0.6, 0.6, 0.25, 0.25))
+
+# Plot 1:
+plot(1, 1, type = 'n', xlim = c(0, 1), ylim = c(0, 4),
+     yaxs = 'i', xlab = '', ylab = '', xaxt = 'n', yaxt = 'n')
+plot_AB(xlim = c(0, 1),
+        ylim = c(0, 4), AB = '(a)',
+        xfactor = 0.02, yfactor = 0.08)
+# Axes:
+axis(side = 1, at = seq(0, 1, 0.25),
+     lwd = 3, labels = FALSE)
+axis(side = 1, at = seq(0, 1, 0.25),
+     tick = FALSE, labels = TRUE,
+     font = 2, line = 0.25, cex.axis = 1.5)
+mtext(side = 1, line = 3.05, text = 'Cosine Similarity',
+      cex = 1.6, font = 2)
+axis(side = 2, at = seq(0, 5, 1),
+     tick = TRUE, labels = TRUE,
+     font = 2, cex.axis = 1.5, las = 2, lwd = 3)
+mtext(side = 2, line = 2.8, text = 'Density',
+      cex = 1.6, font = 2)
+# Density etc.
+plot_density(filter(adj, Attested == 'yes')$Cosine,
+             mean = TRUE, this_color = 'lightgray')
+box(lwd = 2)
+mtext(side = 3, text = 'Attested pairs',
+      font = 2, line = 0.6, cex = 1.5)
+# plot words:
+segments(x0 = 0.95, x1 = 0.55, y0 = 2, y1 = 3, lwd = 3)
+text(x = 0.55, y = 3.20, labels = 'abrasive contact',
+     font = 4, cex = 1.45)
+segments(x0 = 0.32, x1 = 0.25, y0 = 0.1, y1 = 1, lwd = 3)
+text(x = 0.25, y = 1.20, labels = 'sweet music',
+     font = 4, cex = 1.45)
+
+# Plot 2:
+plot(1, 1, type = 'n', xlim = c(0, 1), ylim = c(0, 4), yaxs = 'i',
+	xlab = '', ylab = '', xaxt = 'n', yaxt = 'n')
+plot_AB(xlim = c(0, 1), ylim = c(0, 4), AB = '(b)',
+	xfactor = 0.02, yfactor = 0.08)
+# Axes:
+axis(side = 1, at = seq(0, 1, 0.25),
+     lwd = 3, labels = F)
+axis(side = 1, at = seq(0, 1, 0.25),
+     tick = FALSE, labels = TRUE,
+     font = 2, line = 0.25, cex.axis = 1.5)
+mtext(side = 1, line = 3.05, text = 'Cosine Similarity',
+	cex = 1.6, font = 2)
+# Density etc.
+plot_density(filter(adj, Attested == 'no')$Cosine,
+             mean = TRUE, this_color = 'lightgray')
+box(lwd = 2)
+mtext(side = 3, text = 'Unattested pairs',
+      font = 2, line = 0.6, cex = 1.5)
+```
+
+## Cosine and frequency
+
+Are words with higher cosines more frequent? We'll answer this with a mixed model fitted on log frequencies.
+
+```{r cosine_freq_mixed, cache = TRUE}
+## Mixed model:
+
+summary(cos_freq_lmer <- lmer(LogFreq ~ Cosine +
+	(1 + Cosine|Word) + (1 + Cosine|Noun),
+	filter(adj, Attested == 'yes'), REML = FALSE))
+
+## Null model:
+
+summary(cos_freq_lmer_null <- lmer(LogFreq ~ 1 +
+	(1 + Cosine|Word) + (1 + Cosine|Noun),
+	filter(adj, Attested == 'yes'), REML = FALSE))
+
+## Likelihood ratio test:
+
+anova(cos_freq_lmer_null,
+	cos_freq_lmer, test = 'Chisq')
+
+## Check R-squared:
+
+r.squaredGLMM(cos_freq_lmer)
+
+```
+
+Compare with Poisson models.
+
+```{r cosine_pois_mixed, cache = TRUE}
+## Mixed model:
+
+summary(cos_freq_pois <- glmer(Freq ~ Cosine +
+	(1 + Cosine|Word) + (1 + Cosine|Noun),
+	filter(adj, Attested == 'yes'), family = 'poisson'))
+save(cos_freq_pois, file = '../models/cos_freq_pois.mdl')
+
+## Null model:
+
+summary(cos_freq_pois_null <- glmer(Freq ~ 1 +
+	(1 + Cosine|Word) + (1 + Cosine|Noun),
+	filter(adj, Attested == 'yes'), family = 'poisson'))
+save(cos_freq_pois_null, file = '../models/cos_freq_pois_null.mdl')
+
+## Likelihood ratio test:
+
+anova(cos_freq_pois_null,
+	cos_freq_pois, test = 'Chisq')
+
+## Check R-squared:
+
+r.squaredGLMM(cos_freq_pois)
+
+```
+
+Let's make a graph of this:
+
+```{r cos_freq_graph}
+## Cosine by frequency graph:
+
+quartz('', 9, 6)
+par(mai = c(1.5, 1.75, 0.25, 0.25))
+plot(1, 1, xlim = c(0, 1), ylim = c(-0.5, 5),
+     type = 'n', yaxs = 'i', xlab = '', ylab ='',
+     xaxt = 'n', yaxt = 'n', bty = 'n')
+axis(side = 1, at = seq(0, 1, 0.25),
+     lwd = 3, labels = FALSE)
+axis(side = 1, at = seq(0, 1, 0.25),
+     tick = F, labels = TRUE,
+     font = 2, line = 0.25, cex.axis = 1.5)
+mtext(side = 1, line = 4.5,
+      text = 'Cosine Similarity',
+      cex = 2.15, font = 2)
+axis(side = 2, at = seq(0, 5, 1),
+     tick = TRUE, labels = TRUE,
+     font = 2, cex.axis = 1.5, las = 2, lwd = 3)
+mtext(side = 2, line = 3.5,
+      text = 'Frequency (log10)',
+      cex = 2.15, font = 2)
+points(adj$Cosine, adj$LogFreq,
+       col = rgb(0, 0, 0, 0.4), pch = 19)
+box(lwd = 3)
+```
+
+## Computing frequency-weighted cosines
+
+We now want to work with the attested pairs only to look at whether modalities differ in their cosines.
+
+```{r cos_subset}
+## Attested subset:
+
+adj_red <- filter(adj, Attested == 'yes')
+
+```
+
+We want to get weighted cosines, weighted by the token frequency of the adjective-noun pair.
+
+```{r cos_weights}
+## For creating weights, summarize frequencies:
+
+adj_freqs <- aggregate(Freq ~ Word, adj_red, sum)
+colnames(adj_freqs)[2] <- 'AdjFreq'
+
+## Add frequency to data frame:
+
+adj_red$AdjFreq <- adj_freqs[match(adj_red$Word,
+                                   adj_freqs$Word), ]$AdjFreq
+
+## Compute weights from this:
+
+adj_red <- mutate(adj_red,
+                  Weight = Freq / AdjFreq)
+
+## Calculate weighted means by hand:
+
+all_adjs <- unique(adj_red$Word)
+all_adjs_mean <- numeric(length(all_adjs))
+all_adjs_wm <- numeric(length(all_adjs))
+
+for (i in seq_along(all_adjs)) {
+  this_df <- filter(adj_red, Word == all_adjs[i])
+	all_adjs_mean[i] <- mean(this_df$Cosine)
+	all_adjs_wm[i] <- weighted.mean(this_df$Cosine,
+	                                w = this_df$Weight)
+	}
+
+## Put weighted and unweighted cosines back into into data frame:
+
+adj_cosines <- tibble(Word = all_adjs,
+                      Cosine = all_adjs_mean,
+                      CosineWeighted = all_adjs_wm)
+adj_cosines <- left_join(adj_cosines,
+                         select(lyn, -PropertyBritish))
+
+```
+
+Now we can look at the average cosines per sensory modality.
+
+```{r cos_summarize}
+## Take aggregate cosine per modality:
+
+aggregate(CosineWeighted ~ DominantModality,
+          adj_cosines, mean) %>%
+	arrange(desc(CosineWeighted)) %>%
+	mutate(CosineWeighted = round(CosineWeighted, 2))
+
+aggregate(Cosine ~ DominantModality,
+          adj_cosines, mean) %>%
+  arrange(desc(Cosine)) %>%
+  mutate(Cosine = round(Cosine, 2))
+```
+
+To understand these measures better, let's look at the degree to which the weighted and the unweighted cosine measures correlate with each other.
+
+```{r cos_weighted_comparison}
+## Correlate both cosines with each other:
+
+with(adj_cosines,
+     cor.test(Cosine, CosineWeighted,
+              method = 'pearson'))
+with(adj_cosines,
+     cor.test(Cosine, CosineWeighted,
+              method = 'spearman'))
+```
+
+Next, let's look at how these cosine measures correspond to the modality exclusivity measure.
+
+```{r }
+## Correlate modality exclusivity with cosine similarity:
+
+with(adj_cosines,
+     cor.test(Cosine, ModalityExclusivity,
+              method = 'pearson'))
+with(adj_cosines,
+     cor.test(Cosine, ModalityExclusivity,
+              method = 'spearman'))
+
+with(adj_cosines,
+     cor.test(CosineWeighted, ModalityExclusivity,
+              method = 'pearson'))
+with(adj_cosines,
+     cor.test(CosineWeighted, ModalityExclusivity,
+              method = 'spearman'))
+```
+
+
+## Cosines by sensory modality
+
+Let's look at a test by sensory modality.
+
+```{r cos_mod_test}
+## Test according to dominant modality classification:
+
+summary(xmdl.weighted <- lm(CosineWeighted ~ DominantModality,
+                            adj_cosines))
+anova(xmdl.weighted)
+
+summary(xmdl <- lm(Cosine ~ DominantModality,
+                   adj_cosines))
+anova(xmdl)
+
+## Same with Kruskal-Wallis:
+
+kruskal.test(CosineWeighted ~ as.factor(DominantModality),
+             adj_cosines)
+kruskal.test(Cosine ~ as.factor(DominantModality),
+             adj_cosines)
+```
+
+We can do the same thing with the continuos measures, using an adjectives perceptual strength rating to predict cosines.
+
+```{r cos_cont_test}
+summary(xmdl.cont.weighted <- lm(CosineWeighted ~
+                                   AdjVisualStrengthMean +
+                                   AdjAuditoryStrengthMean +
+                                   AdjHapticStrengthMean + 
+                                   AdjGustatoryStrengthMean +
+                                   AdjOlfactoryStrengthMean,
+                                 adj_cosines))
+anova(xmdl.cont.weighted)
+
+summary(xmdl.cont <- lm(Cosine ~ AdjVisualStrengthMean +
+                          AdjAuditoryStrengthMean +
+                          AdjHapticStrengthMean +
+                          AdjGustatoryStrengthMean +
+                          AdjOlfactoryStrengthMean,
+                        adj_cosines))
+anova(xmdl.cont)
+
+```
+
+Let's make sure there's no problem with collinearity, using variacne inflation factors.
+
+```{r vif_cosines}
+vif(xmdl.cont)
+vif(xmdl.cont.weighted)
+```
+
+## Correlations between senses
+
+We want to create a matrix with the average perceptual strength of the nouns for each adjective, both weighted by frequency of the adjective-noun pair and unweighted.
+
+```{r strength_weight}
+## Get the reduced dataset with averages (weighted mean):
+
+group_by(adj_red, Word) %>%
+  summarise(Freq = sum(Freq),
+            AdjVisual = mean(AdjVisualStrengthMean),
+            AdjAuditory = mean(AdjAuditoryStrengthMean),
+            AdjHaptic = mean(AdjHapticStrengthMean),
+            AdjGustatory = mean(AdjGustatoryStrengthMean),
+            AdjOlfactory = mean(AdjOlfactoryStrengthMean),
+            NounVisualMeanW = weighted.mean(NounVisualStrengthMean, w = Weight),
+            NounAuditoryMeanW = weighted.mean(NounAuditoryStrengthMean,
+		w = Weight),
+		NounHapticMeanW = weighted.mean(NounHapticStrengthMean,
+		w = Weight),
+		NounGustatoryMeanW = weighted.mean(NounGustatoryStrengthMean,
+		w = Weight),
+		NounOlfactoryMeanW = weighted.mean(NounOlfactoryStrengthMean,
+		w = Weight),
+		NounVisualMean = mean(NounVisualStrengthMean),
+		NounAuditoryMean = mean(NounAuditoryStrengthMean),
+		NounHapticMean = mean(NounHapticStrengthMean),
+		NounGustatoryMean = mean(NounGustatoryStrengthMean),
+		NounOlfactoryMean = mean(NounOlfactoryStrengthMean)) -> adj_agr
+```
+
+Check the correlations between the weighted and unweighted measures:
+
+```{r cor_weight_check}
+## Pearson correlations:
+
+with(adj_agr,
+     cor.test(NounVisualMeanW, NounVisualMean,
+              method = 'pearson'))
+with(adj_agr,
+     cor.test(NounAuditoryMeanW, NounAuditoryMean,
+              method = 'pearson'))
+with(adj_agr,
+     cor.test(NounHapticMeanW, NounHapticMean,
+              method = 'pearson'))
+with(adj_agr,
+     cor.test(NounGustatoryMeanW, NounGustatoryMean,
+              method = 'pearson'))
+with(adj_agr,
+     cor.test(NounOlfactoryMeanW, NounOlfactoryMean,
+              method = 'pearson'))
+
+## Pearson correlations:
+
+with(adj_agr,
+     cor.test(NounVisualMeanW, NounVisualMean,
+              method = 'spearman'))
+with(adj_agr,
+     cor.test(NounAuditoryMeanW, NounAuditoryMean,
+              method = 'spearman'))
+with(adj_agr,
+     cor.test(NounHapticMeanW, NounHapticMean,
+              method = 'spearman'))
+with(adj_agr,
+     cor.test(NounGustatoryMeanW, NounGustatoryMean,
+              method = 'spearman'))
+with(adj_agr,
+     cor.test(NounOlfactoryMeanW, NounOlfactoryMean,
+              method = 'spearman'))
+```
+
+Next, we set up matrices to be filled with correlations:
+
+```{r cor_matrix_create}
+## Set up matrix for first-order correlations:
+
+noun_cors <- matrix(rep(NA, 5 * 5), nrow = 5)
+rownames(noun_cors) <- str_c('Adj', mymods)
+colnames(noun_cors) <- str_c('Noun', mymods, 'MeanW')
+noun_cors_spear <- noun_cors
+
+## Set up matrix for p-values:
+
+noun_cors_pvals <- noun_cors
+noun_cors_spear_pvals <- noun_cors
+```
+
+Compute the correlations:
+
+```{r all_cors_compute}
+
+## Loop through matrix to fill each cell with first order correlations:
+
+for (i in 1:5) {
+	adjective_modality <- rownames(noun_cors)[i]
+	
+	for (j in 1:5) {
+		noun_modality <- colnames(noun_cors)[j]
+		
+		cor.temp <- cor.test(unlist(adj_agr[,adjective_modality]),
+			unlist(adj_agr[,noun_modality]))
+		
+		suppressWarnings(cor.temp_spear <- cor.test(unlist(adj_agr[,adjective_modality]),
+			unlist(adj_agr[,noun_modality]), method = 'spearman'))
+		
+		noun_cors[i, j] <- cor.temp$estimate	# correlation coefficients
+		noun_cors_pvals[i, j] <- cor.temp$p.value		# p-values
+
+		noun_cors_spear[i, j] <- cor.temp_spear$estimate	# correlation coefficients
+		noun_cors_spear_pvals[i, j] <- cor.temp_spear$p.value		# p-values
+				
+		}
+	}
+
+```
+
+Let's look at the correlations, and which ones are significant after Bonferroni correction.
+
+```{r mult_comp}
+## Multiple comparisons corrected p-values, Pearson:
+
+round(noun_cors, 2)
+noun_cors_pvals < (0.05/25)
+
+## Multiple comparisons corrected p-values, Spearman:
+
+round(noun_cors_spear, 2)
+noun_cors_spear_pvals < (0.05/25)
+
+```
+
+To have a better look at this, let's check where Pearson's and Spearman's don't agree with each other:
+
+```{r spear_pears_comp}
+(noun_cors_pvals < (0.05/25)) == (noun_cors_spear_pvals < (0.05/25))
+```
+
+For reporting, check vision and taste:
+
+```{r cor_check}
+with(adj_agr,
+     cor.test(AdjVisual,
+              NounGustatoryMeanW))
+with(adj_agr,
+     cor.test(AdjVisual,
+              NounGustatoryMeanW,
+              method = 'spearman'))
+```
+
+This completes the analyses presented in Chapter 14.

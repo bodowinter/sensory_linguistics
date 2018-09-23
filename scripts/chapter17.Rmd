@@ -1,0 +1,1468 @@
+---
+title: "Chapter 17 - Perceptual metaphor"
+author: "Bodo Winter"
+date: "8/26/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This is the analysis for Chapter 17, which is on perceptual metaphor. Here, we assume categorical sense divisions to keep things consistent with the literature on "synesthetic metaphors". We will use this to replicate the hierarchy with a new corpus. However, we will then go further and show how the composition of the lexicon is actually a problem for the idea that there's anything special about the hierarchy of the senses with respect to "synesthetic metaphors".
+
+We begin by loading in the data and libraries.
+
+```{r packages_data, message = FALSE}
+## Libraries:
+
+library(png)		# for plotting sensory modality images
+library(tidyverse)
+library(stringr)
+library(lme4)
+library(MuMIn)
+
+## Load data:
+
+lyn <- read_csv('../processed-data/lyn_cluster.csv')
+COCA <- read_csv('../raw-data/COCA_adj_noun.csv')
+strik <- read_csv('../raw-data/modality_strik_lievers_2015.csv')
+war <- read_csv('../raw-data/valence_warriner_2013.csv')
+snef <- read_delim('../raw-data/snefjella_kuperman_context_valence.csv',
+                   delim = ' ')
+SUBTL <- read_csv('../raw-data/frequency_SUBTLEX_POS.csv')
+sem <- read_csv('../raw-data/lynott_connell_2009_semantic_codings.csv')
+icon <- read_csv('../raw-data/iconicity_ratings.csv')
+
+## Load plotting functions:
+
+source('../functions/table_plotting.R')
+source('../functions/chisq_NA.R')
+source('../functions/predict.glmm.R')
+source('../functions/emptyplot.R')
+```
+
+This time, we will use the image data (from freepix.com). So let's load in images and specify the color values.
+
+```{r image_setup}
+## Load in images:
+
+s1 <- readPNG('../figures/sight.png')
+s2 <- readPNG('../figures/touch.png')
+s3 <- readPNG('../figures/sound.png')
+s4 <- readPNG('../figures/taste.png')
+s5 <- readPNG('../figures/smell.png')
+
+## Define vector of names:
+
+pic_names <- str_c('s', c(2, 4, 5, 3, 1))
+```
+
+First, we need to compute the absolute valence measure for the Warriner et al. (2013) and the Snefjella and Kuperman (2016) data.
+
+```{r valence_compute}
+## Compute absval for Warriner et al. (2013):
+
+war <- mutate(war,
+              Val_c = V.Mean.Sum - mean(V.Mean.Sum),
+              Val_z = Val_c / sd(Val_c),
+              AbsVal = abs(Val_z)) %>%
+  select(Word, AbsVal, Val_z)
+
+## Compute absval for Snefjella & Kuperman (2016):
+
+snef <- mutate(snef,
+               ContextVal_c = Context_Valence - mean(Context_Valence),
+               ContextVal_z = ContextVal_c / sd(ContextVal_c),
+               ContextAbsVal = abs(ContextVal_z)) %>%
+  select(Word, ContextAbsVal, ContextVal_z)
+```
+
+## Cleaning the dataset
+
+As was established in previous chapters, the nouns by Lynott and Connell (2009) are highly multisensory. Moreover, they have been randomly sampled. This means that the nouns often are only tangentially related to a particular sensory modality. In addition, there are very few taste and smell nouns. Because of all of these reasons, I will use theStrik Lievers (2015) dataset for nouns.
+
+Instruments will be included because expressions such as "red violin" can't be taken to be "synesthetic metaphors".
+
+```{r strik_nouns}
+strik <- filter(strik, POS == 'Noun')
+
+## And no instruments:
+
+strik <- filter(strik, Instrument == 'no')
+```
+
+Merge COCA with dataset with Strik Lievers (2015) noun info.
+
+```{r COCA_strik_merge}
+COCA <- left_join(COCA, strik,
+                  by = c('Noun' = 'Word'))
+```
+
+Reduce the COCA dataset to those for which there is modality information for the nouns (i.e., the nouns are represented in Strik Lievers 2015).
+
+```{r COCA_strik_reduce}
+nrow(COCA)	# 149,387
+COCA <- filter(COCA,
+               !is.na(Modality))
+nrow(COCA)	# 4,471
+```
+
+Check overall token frequency:
+
+```{r token_freq_all}
+sum(COCA$Freq)
+```
+
+Merge adjective modalities into strik dataset:
+
+```{r merge_COCA_lyn}
+COCA <- left_join(COCA, lyn)
+```
+
+Create a same vs. different variable for Strik:
+
+```{r same_diff_mod}
+COCA <- mutate(COCA,
+	Same = ifelse(Modality == DominantModality, 'yes', 'no'))
+```
+
+Add dimensionality information and get rid of dimension words:
+
+```{r add_dim}
+COCA$Dimension <- sem[match(COCA$Word, sem$Word), ]$Dimension
+
+## What are dimension words, explore:
+
+sort(filter(sem, Dimension == 'yes')$Word)
+length(sort(filter(sem, Dimension == 'yes')$Word))
+filter(lyn, Class == 'shape & extent')$Word
+setdiff(filter(lyn, Class == 'shape & extent')$Word,
+	sort(filter(sem, Dimension == 'yes')$Word))
+```
+
+Get rid of dimension words:
+
+```{r COCA_dim}
+COCA <- filter(COCA, Dimension == 'no')
+nrow(COCA)	# 3,733
+sum(COCA$Freq)	# 21,679
+```
+
+Check 'look' and 'eye', which should be excluded.
+
+```{r look_eye_reduce}
+filter(COCA, Noun == 'look') %>% arrange(desc(Freq))
+filter(COCA, Noun == 'eye') %>% arrange(desc(Freq))
+COCA <- filter(COCA, !(Noun %in% c('look', 'eye')))
+nrow(COCA)	# 3,542
+sum(COCA$Freq)	# 19,381
+```
+
+Take only those that are the 80% most exclusive:
+
+```{r excl_reduce}
+COCA <- filter(COCA,
+	ModalityExclusivity > quantile(lyn$ModalityExclusivity, 0.20))
+nrow(COCA)	# 2,571
+sum(COCA$Freq)	# 14,652
+```
+
+## Ullmann-style table with token frequencies
+
+We will now create the first Ullmann-style table. First, we will look at token frequencies.
+
+```{r ullmann_token}
+## Summarize token frequencies:
+
+COCA_token <- aggregate(Freq ~ Modality * DominantModality,
+data = COCA, sum)
+
+## Create an empty table:
+
+COCA_token_tab <- matrix(numeric(25), nrow = 5)
+rownames(COCA_token_tab) <- c('Haptic', 'Gustatory', 'Olfactory', 'Auditory', 'Visual')
+colnames(COCA_token_tab) <- rownames(COCA_token_tab)
+
+## Loop through the tables and add token frequencies:
+
+for (i in 1:nrow(COCA_token_tab)) {
+  for (j in 1:nrow(COCA_token_tab)) {
+    this_row <- COCA_token$DominantModality == rownames(COCA_token_tab)[i]
+    
+    strik_row <- this_row & COCA_token$Modality == colnames(COCA_token_tab)[j]
+    
+    COCA_token_tab[i, j] <- COCA_token[strik_row, ]$Freq
+		}
+	}
+```
+
+Investigate the table:
+
+```{r ullmann_token_check}
+COCA_token_tab
+sum(COCA_token_tab)
+```
+
+Next, we perform Chi-Square test, with and without the diagonal:
+
+```{r ullmann_token_chisq}
+## With diagonal:
+
+chisq.test(COCA_token_tab)$stdres
+
+## Without diagonal:
+
+COCA_token_NA <- COCA_token_tab
+diag(COCA_token_NA) <- NA
+chisq.test_na(COCA_token_NA)
+stdres_fnc(COCA_token_NA)
+```
+
+Finally, we investigate the source / target ratios.
+
+```{r ullmann_token_source_target}
+rowSums(COCA_token_NA, na.rm = TRUE)
+colSums(COCA_token_NA, na.rm = TRUE)
+
+round(rowSums(COCA_token_NA, na.rm = TRUE) /
+        colSums(COCA_token_NA, na.rm = TRUE), 2)
+```
+
+## Ullmann-style table with type frequencies
+
+We repeat the above analyses for type frequencies. In this case, each adjective-noun pair only contributes one data point, no matter how frequent or infrequent they are.
+
+```{r ullmann_type}
+## Create an empty table:
+
+COCA_type_tab <- matrix(numeric(25), nrow = 5)
+rownames(COCA_type_tab) <- c('Haptic', 'Gustatory', 'Olfactory',
+                             'Auditory', 'Visual')
+colnames(COCA_type_tab) <- rownames(COCA_type_tab)
+
+## Loop through the tables and add token frequencies:
+
+for (i in 1:nrow(COCA_type_tab)) {
+	for (j in 1:nrow(COCA_type_tab)) {
+			these_rows <- COCA$DominantModality == rownames(COCA_type_tab)[i]
+
+			COCA_row <- these_rows & COCA$Modality == colnames(COCA_type_tab)[j]
+			
+			COCA_type_tab[i, j] <- sum(COCA_row)
+		}
+	}
+```
+
+Investigate the table:
+
+```{r ullmann_type_check}
+COCA_type_tab
+sum(COCA_type_tab)
+```
+
+Next, we perform Chi-Square test, with and without the diagonal:
+
+```{r ullmann_type_chisq}
+## With diagonal:
+
+chisq.test(COCA_type_tab)$stdres
+
+## Without diagonal:
+
+COCA_type_NA <- COCA_type_tab
+diag(COCA_type_NA) <- NA
+stdres_fnc(COCA_type_NA)
+chisq.test_na(COCA_type_NA)
+```
+
+Finally, we investigate the source / target ratios.
+
+```{r ullmann_type_source_target}
+rowSums(COCA_type_NA, na.rm = TRUE)
+colSums(COCA_type_NA, na.rm = TRUE)
+
+round(rowSums(COCA_type_NA, na.rm = TRUE) /
+        colSums(COCA_type_NA, na.rm = TRUE), 2)
+```
+
+## Ullmann-style table with Hapax legomena
+
+We repeat the above analyses for hapax legomena. In this case, we only look at those adjective-noun pairs that occur just once.
+
+```{r ullmann_hapax}
+## Create an empty table:
+
+COCA_hapax_tab <- matrix(numeric(25), nrow = 5)
+rownames(COCA_hapax_tab) <- c('Haptic', 'Gustatory', 'Olfactory',
+                              'Auditory', 'Visual')
+colnames(COCA_hapax_tab) <- rownames(COCA_hapax_tab)
+
+## Subset of those that have frequency = 1:
+
+COCA_hapax <- filter(COCA, Freq == 1)
+
+## Loop through the tables and add token frequencies:
+
+for (i in 1:nrow(COCA_hapax_tab)) {
+	for (j in 1:nrow(COCA_hapax_tab)) {
+			these_rows <- COCA_hapax$DominantModality == rownames(COCA_hapax_tab)[i]
+
+			COCA_row <- these_rows & COCA_hapax$Modality == colnames(COCA_hapax_tab)[j]
+			
+			COCA_hapax_tab[i, j] <- sum(COCA_row)
+		}
+	}
+```
+
+Investigate the table:
+
+```{r ullmann_hapax_check}
+COCA_hapax_tab
+sum(COCA_hapax_tab)
+```
+
+Next, we perform Chi-Square test, with and without the diagonal:
+
+```{r ullmann_hapax_chisq}
+## With diagonal:
+
+chisq.test(COCA_hapax_tab)$stdres
+
+## Without diagonal:
+
+COCA_hapax_NA <- COCA_hapax_tab
+diag(COCA_hapax_NA) <- NA
+stdres_fnc(COCA_hapax_NA)
+chisq.test_na(COCA_hapax_NA)
+```
+
+Finally, we investigate the source / target ratios.
+
+```{r ullmann_hapax_source_target}
+rowSums(COCA_hapax_NA, na.rm = TRUE)
+colSums(COCA_hapax_NA, na.rm = TRUE)
+
+round(rowSums(COCA_hapax_NA, na.rm = TRUE) /
+        colSums(COCA_hapax_NA, na.rm = TRUE), 2)
+```
+
+## Check within-modality cases for all tables
+
+How many are on the diagonal, compared to how many are off the diagonal?
+
+```{r within_mod}
+
+## Counts with diagonal:
+
+sum(diag(COCA_token_tab))
+sum(diag(COCA_type_tab))
+sum(diag(COCA_hapax_tab))
+
+## Counts off the diagonal:
+
+sum(COCA_token_NA, na.rm = TRUE)
+sum(COCA_type_NA, na.rm = TRUE)
+sum(COCA_hapax_NA, na.rm = TRUE)
+
+## Proportions of within-modality cases:
+
+sum(diag(COCA_token_tab)) / sum(COCA_token_tab)
+sum(diag(COCA_type_tab)) / sum(COCA_type_tab)
+sum(diag(COCA_hapax_tab)) / sum(COCA_hapax_tab)
+
+## Check proportions of those that are OFF the diagonal:
+
+sum(COCA_token_NA, na.rm = TRUE) /
+  sum(COCA_token_tab)
+sum(COCA_type_NA, na.rm = TRUE) /
+  sum(COCA_type_tab)
+sum(COCA_hapax_NA, na.rm = TRUE) /
+  sum(COCA_hapax_tab)
+
+```
+
+## Comparison of standardized residuals
+
+Set labels. These will be re-used across the token, type and hapax counts.
+
+```{r stdres_setlabels}
+mylabs <- c('touch-to-taste', 'touch-to-smell', 'touch-to-sound',
+            'touch-to-sight', 'taste-to-smell', 'taste-to-sound',
+            'taste-to-sight', 'smell-to-sound', 'smell-to-sight',
+            'sight-to-sound')
+```
+
+Now extract the residuals.
+
+```{r stdres_extract}
+# Extract tokens standardized residuals:
+
+consistent <- c(stdres_fnc(COCA_token_NA)[1, 2:5],
+                stdres_fnc(COCA_token_NA)[2, 3:5],
+                stdres_fnc(COCA_token_NA)[3, 4:5],
+                stdres_fnc(COCA_token_NA)[4, 5])
+inconsistent <- c(stdres_fnc(COCA_token_NA)[2:5, 1],
+                  stdres_fnc(COCA_token_NA)[3:5, 2],
+                  stdres_fnc(COCA_token_NA)[4:5, 3],
+                  stdres_fnc(COCA_token_NA)[5, 4])
+COCA_token_STDRES <- tibble(Mapping = mylabs,
+                           Consistent = consistent,
+                           Inconsistent = inconsistent)
+
+# Extract types standardized residuals:
+
+consistent <- c(stdres_fnc(COCA_type_NA)[1, 2:5],
+                stdres_fnc(COCA_type_NA)[2, 3:5],
+                stdres_fnc(COCA_type_NA)[3, 4:5],
+                stdres_fnc(COCA_type_NA)[4, 5])
+inconsistent <- c(stdres_fnc(COCA_type_NA)[2:5, 1],
+                  stdres_fnc(COCA_type_NA)[3:5, 2],
+                  stdres_fnc(COCA_type_NA)[4:5, 3],
+                  stdres_fnc(COCA_type_NA)[5, 4])
+COCA_type_STDRES <- tibble(Mapping = mylabs,
+                           Consistent = consistent,
+                           Inconsistent = inconsistent)
+
+## For hapaxes:
+
+consistent <- c(stdres_fnc(COCA_hapax_NA)[1, 2:5],
+                stdres_fnc(COCA_hapax_NA)[2, 3:5],
+                stdres_fnc(COCA_hapax_NA)[3, 4:5],
+                stdres_fnc(COCA_type_NA)[4, 5])
+inconsistent <- c(stdres_fnc(COCA_hapax_NA)[2:5, 1],
+                  stdres_fnc(COCA_hapax_NA)[3:5, 2],
+                  stdres_fnc(COCA_hapax_NA)[4:5, 3],
+                  stdres_fnc(COCA_hapax_NA)[5, 4])
+
+COCA_hapax_STDRES <- tibble(Mapping = mylabs,
+                            Consistent = consistent,
+                            Inconsistent = inconsistent)
+```
+
+Perform descriptive comparisons. Which ones are significantly asymmetric? (using |2| as a cut-off criterion)
+
+```{r stdres_comp}
+## Tokens:
+
+COCA_token_STDRES %>%
+  mutate(Diff = round(Consistent - Inconsistent, 2))
+
+## Types:
+
+COCA_type_STDRES %>%
+  mutate(Diff = round(Consistent - Inconsistent, 2))
+
+## Hapax legomena:
+
+COCA_hapax_STDRES %>%
+  mutate(Diff = round(Consistent - Inconsistent, 2))
+```
+
+Perform significance tests for standardized residuals of consistent versus inconsistent mappings.
+
+```{r stdres_tests}
+## Tokens:
+
+with(COCA_token_STDRES[-10, ],		# without sight-to-sound
+     t.test(Consistent, Inconsistent, paired = TRUE))
+
+## Types:
+
+with(COCA_type_STDRES[-10, ],		# without sight-to-sound
+     t.test(Consistent, Inconsistent, paired = TRUE))
+
+## Types:
+
+with(COCA_hapax_STDRES[-10, ],		# without sight-to-sound
+     t.test(Consistent, Inconsistent, paired = TRUE))
+
+```
+
+## Table plots:
+
+First, we need to set some plotting parameters.
+
+```{r plot_pars}
+## Set parameters of plot:
+
+line_width <- 2
+shen_color <- 'antiquewhite2'
+```
+
+Then we can plot the token counts.
+
+```{r plot_tokens}
+png('../figures/COCA_tokens.png', width = 850, height = 850)
+par(mai = rep(1.5, 4), omi = rep(0.5, 4))
+plot(1, 1, type = 'n', bty = 'n',
+     xaxt = 'n', yaxt = 'n', xlab = '', ylab = '',
+     xaxs = 'i', yaxs = 'i',
+     xlim = c(0, 5), ylim = c(0, 5))
+plot_axes(pic_names)
+for (i in 0:4) {
+  rect(xleft = i, xright = i + 1,
+       ybottom = 4 - i, ytop = 4 + i + 1,
+       col = 'lightblue')
+	}
+plot_shen()
+plot_counts(COCA_token_tab, cex = 2.8,
+            ypos = 0.5, middle = TRUE)
+# plot_counts(round(stdres_fnc(COCA_token_NA), 1),
+            # cex = 1.7, ypos = 0.3, stdres = TRUE)
+plot_margins(COCA_token_NA,
+             rect = TRUE, cex = 2.1)
+plot_raster()
+dev.off()
+```
+
+Next, plot of type counts:
+
+```{r plot_types}
+png('../figures/COCA_types.png', width = 850, height = 850)
+par(mai = rep(1.5, 4), omi = rep(0.5, 4))
+plot(1, 1, type = 'n', bty = 'n',
+     xaxt = 'n', yaxt = 'n', xlab = '', ylab = '',
+     xaxs = 'i', yaxs = 'i',
+     xlim = c(0, 5), ylim = c(0, 5))
+plot_axes(pic_names)
+for (i in 0:4) {
+	rect(xleft = i, xright = i + 1,
+		ybottom = 4 - i, ytop = 4 + i + 1,
+		col = 'lightblue')
+	}
+plot_shen()
+plot_counts(COCA_type_tab, cex = 2.8,
+            ypos = 0.6, middle = TRUE)
+plot_counts(round(stdres_fnc(COCA_type_NA), 1),
+            cex = 1.7, ypos = 0.3, stdres = TRUE)
+plot_margins(COCA_type_NA, rect = TRUE, cex = 2.1)
+plot_raster()
+dev.off()
+```
+
+Finally, plot of hapaxes.
+
+```{r plot_hapax}
+png('../figures/COCA_hapax.png', width = 850, height = 850)
+par(mai = rep(1.5, 4), omi = rep(0.5, 4))
+plot(1, 1, type = 'n', bty = 'n',
+     xaxt = 'n', yaxt = 'n', xlab = '', ylab = '',
+     xaxs = 'i', yaxs = 'i',
+     xlim = c(0, 5), ylim = c(0, 5))
+plot_axes(pic_names)
+for (i in 0:4) {
+  rect(xleft = i, xright = i + 1,
+       ybottom = 4 - i, ytop = 4 + i + 1,
+       col = 'lightblue')
+	}
+plot_shen()
+plot_counts(COCA_hapax_tab, cex = 2.8,
+            ypos = 0.6, middle = TRUE)
+plot_counts(round(stdres_fnc(COCA_hapax_NA), 1),
+            cex = 1.7, ypos = 0.3, stdres = TRUE)
+plot_margins(COCA_hapax_NA, rect = TRUE, cex = 2.1)
+plot_raster()
+dev.off()
+```
+
+## Assess evidence for hierarchy of the senses
+
+We begin by defining matrices for each of the different hierarchies.
+
+```{r define_matrices}
+ull.matches <- c(F, T, T, T, T,
+	F, F, T, T, T,
+	F, F, F, T, T,
+	F, F, F, F, T,
+	F, F, F, F, F)
+shen.matches <- c(F, T, T, T, T,
+	F, F, T, T, T,
+	F, F, F, T, T,
+	F, F, F, F, T,
+	F, F, F, T, F)
+will.matches <- c(F, T, F, T, T,
+	F, F, T, T, F,
+	F, F, F, F, F,
+	F, F, F, F, T,
+	F, F, F, T, F)
+```
+
+We extract the matches and mismatches:
+
+```{r extract_matches}
+## Ullmann:
+
+ull.matches <- matrix(ull.matches, nrow = 5, byrow = TRUE)
+ull.mismatches <- !ull.matches
+diag(ull.mismatches) <- FALSE
+
+## Shen:
+
+shen.matches <- matrix(shen.matches, nrow = 5, byrow = TRUE)
+shen.mismatches <- !shen.matches
+diag(shen.mismatches) <- FALSE
+
+## Williams (1976):
+
+will.matches <- matrix(will.matches, nrow = 5, byrow = TRUE)
+will.mismatches <- !will.matches
+diag(will.mismatches) <- FALSE
+```
+
+Next, we define ourselves some helper functions:
+
+```{r match_setup}
+## Functions that reports matches and mismatches:
+
+hierarchy.fit <- function(xtab,
+                          match = shen.matches,
+                          probability = 0.5) {
+  diag(xtab) <- 0
+	
+	## Specify values to report:
+	
+	N <- sum(xtab)
+	N_match <- sum(xtab[match])
+	N_mismatch <- N - N_match
+	percent_match <- N_match / N
+	
+	## Values to report in character format:
+	
+	N <- str_c('N = ', N)
+	N_match <- str_c('No. of matches = ',
+	                 N_match)
+	N_mismatch <- str_c('No. of mismatches = ',
+	                    N_mismatch)
+	percent_match <- str_c('Percent match = ',
+	                       round(percent_match, 2) * 100, '%')
+	
+	## Paste this:
+	
+	cat(str_c(c(N, N_match, N_mismatch, percent_match),
+	          collapse = '\n'))
+	
+	}
+```
+
+Now we can use this function on our tables.
+
+```{r check_fit}
+## Token counts:
+
+hierarchy.fit(COCA_token_tab, match = shen.matches)
+hierarchy.fit(COCA_token_tab, match = will.matches)
+hierarchy.fit(COCA_token_tab, match = ull.matches)
+
+## Type counts:
+
+hierarchy.fit(COCA_type_tab, shen.matches)
+hierarchy.fit(COCA_type_tab, will.matches)
+hierarchy.fit(COCA_type_tab, ull.matches)
+
+## Hapax counts:
+
+hierarchy.fit(COCA_hapax_tab, shen.matches)
+hierarchy.fit(COCA_hapax_tab, will.matches)
+hierarchy.fit(COCA_hapax_tab, ull.matches)
+```
+
+## Binomial tests of fit
+
+Finally, we assess whether there are significantly more matches than mismatches. Importantly, the chance baseline needs to be adjusted for these binomial tests because each version of the hierarchy has a different number of cells that are allowed / disallowed.
+
+```{r binom_test}
+## Binomial tests tokens:
+
+binom.test(c(sum(COCA_token_tab[shen.matches]),
+             sum(COCA_token_tab[shen.mismatches])),
+           p = sum(shen.matches) / 20)	# 11 out of 20 is chance
+binom.test(c(sum(COCA_token_tab[will.matches]),
+             sum(COCA_token_tab[will.mismatches])),
+           p = sum(will.matches) / 20)	# 7 out of 20 is chance
+binom.test(c(sum(COCA_token_tab[ull.matches]),
+             sum(COCA_token_tab[ull.mismatches])),
+           p = sum(ull.matches) / 20)	# 10 out of 20 is chance
+
+## Binomial tests types:
+
+binom.test(c(sum(COCA_type_tab[shen.matches]),
+             sum(COCA_type_tab[shen.mismatches])),
+           p = sum(shen.matches) / 20)	# 11 out of 20 is chance
+binom.test(c(sum(COCA_type_tab[will.matches]),
+             sum(COCA_type_tab[will.mismatches])),
+           p = sum(will.matches) / 20)	# 7 out of 20 is chance
+binom.test(c(sum(COCA_type_tab[ull.matches]),
+             sum(COCA_type_tab[ull.mismatches])),
+           p = sum(ull.matches) / 20)	# 10 out of 20 is chance
+
+## Binomial tests hapax:
+
+binom.test(c(sum(COCA_hapax_tab[shen.matches]),
+             sum(COCA_hapax_tab[shen.mismatches])),
+           p = sum(shen.matches) / 20)	# 11 out of 20 is chance
+binom.test(c(sum(COCA_hapax_tab[will.matches]),
+             sum(COCA_hapax_tab[will.mismatches])),
+           p = sum(will.matches) / 20)	# 7 out of 20 is chance
+binom.test(c(sum(COCA_hapax_tab[ull.matches]),
+             sum(COCA_hapax_tab[ull.mismatches])),
+           p = sum(ull.matches) / 20)	# 10 out of 20 is chance
+
+```
+
+## Analysis of %baseline adjectives used
+
+How many of the adjectives from Lynott & Connell (2009) were used?
+
+```{r mapped_table}
+
+mapped <- matrix(numeric(25),
+                 nrow = 5)
+rownames(mapped) <- c('Haptic', 'Gustatory', 'Olfactory',
+                      'Auditory', 'Visual')
+colnames(mapped) <- rownames(mapped)
+
+## Need to take the exclusivity excluded lyn table for reference:
+
+lyn_ref <- filter(lyn,
+                  ModalityExclusivity > quantile(ModalityExclusivity, 0.2))
+
+## Loop through the tables and add token frequencies:
+
+for (i in 1:nrow(mapped)) {
+	for (j in 1:nrow(mapped)) {
+			this_row <- COCA$DominantModality == rownames(mapped)[i]
+
+			COCA_row <- this_row & COCA$Modality == colnames(mapped)[j]
+			
+			these_adjs <- unique(COCA[COCA_row,]$Word)
+			N_adj <- length(these_adjs)
+			N_full <- nrow(lyn_ref[lyn_ref$DominantModality == rownames(mapped)[i], ])
+			
+			mapped[i, j] <- N_adj / N_full
+		}
+	}
+round(mapped, 2)
+
+## Look at row sums versus col sums:
+
+mapped_NA <- mapped
+diag(mapped_NA) <- NA
+round(rowSums(mapped_NA, na.rm = TRUE) /
+        colSums(mapped_NA, na.rm = TRUE), 2)
+
+## Get average percentage based on hierarchy:
+
+mean(mapped[shen.matches])
+mean(mapped[shen.mismatches])
+
+wilcox.test(mapped[shen.matches],
+            mapped[shen.mismatches], paired = FALSE)
+
+mean(mapped[ull.matches])
+mean(mapped[ull.mismatches])
+
+mean(mapped[will.matches])
+mean(mapped[will.mismatches])
+
+## Plot this:
+
+png('../figures/COCA_baseline.png', width = 850, height = 850)
+par(mai = rep(1.5, 4), omi = rep(0.5, 4))
+plot(1, 1, type = 'n', bty = 'n',
+	xaxt = 'n', yaxt = 'n', xlab = '', ylab = '',
+	xaxs = 'i', yaxs = 'i',
+	xlim = c(0, 5), ylim = c(0, 5))
+plot_axes(pic_names)
+for (i in 0:4) {
+	rect(xleft = i, xright = i + 1,
+		ybottom = 4 - i, ytop = 4 + i + 1,
+		col = 'lightblue')
+	}
+plot_shen()
+plot_percent(round(mapped, 2) * 100,
+             cex = 2.3, ypos = 0.5)
+plot_margins(round(mapped, 2) * 100,
+             rect = TRUE, percent = TRUE)
+plot_raster()
+dev.off()
+```
+
+## Model comparison of hierarchies
+
+We can make the data into long format and use generalized linear models to look at which hierarchy predicts the counts best.
+
+```{r}
+
+## Define vectors of names to loop through:
+
+mytabs <- c('COCA_token_NA', 'COCA_type_NA', 'COCA_hapax_NA')
+
+## Define vectors of names of datasets to put into:
+
+mylongs <- c('COCA_token_long', 'COCA_type_long', 'COCA_hapax_long')
+
+## Loop through and make long:
+
+for (k in seq_along(mytabs)) { 
+	x <- get(mytabs[k])
+	xdf <- c()
+	for (i in 1:5) {
+		for (j in 1:5) {
+			this_df <- data.frame(Mapping = str_c(row.names(x)[i],
+			                                      '-', row.names(x)[j]),
+			                      Count = x[i, j])
+			xdf <- rbind(xdf, this_df)
+			}
+		}
+	xdf$Shen <- c(NA, 'yes', 'yes', 'yes', 'yes', 'no',
+		NA, 'yes', 'yes', 'yes', 'no', 'no',
+		NA, 'yes', 'yes', 'no', 'no', 'no',
+		NA, 'yes', 'no', 'no', 'no', 'yes',
+		NA)
+	xdf$Ull <- c(NA, 'yes', 'yes', 'yes', 'yes', 'no',
+		NA, 'yes', 'yes', 'yes', 'no', 'no',
+		NA, 'yes', 'yes', 'no', 'no', 'no',
+		NA, 'yes', 'no', 'no', 'no', 'no',
+		NA)	
+	xdf$Will <- c(NA, 'yes', 'no', 'yes', 'yes', 'no',
+		NA, 'yes', 'no', 'no', 'no', 'no',
+		NA, 'no', 'no', 'no', 'no', 'no',
+		NA, 'yes', 'no', 'no', 'no', 'no',
+		NA)	
+		
+	assign(mylongs[k], na.omit(xdf))
+	}
+
+## Make Poisson models of this, starting with token models:
+
+summary(glm(Count ~ Shen,
+            data = COCA_token_long, family = 'poisson'))
+summary(glm(Count ~ Ull,
+            data = COCA_token_long, family = 'poisson'))
+summary(glm(Count ~ Will,
+            data = COCA_token_long, family = 'poisson'))
+
+## Type models:
+
+summary(glm(Count ~ Shen,
+            data = COCA_type_long, family = 'poisson'))
+summary(glm(Count ~ Ull,
+            data = COCA_type_long, family = 'poisson'))
+summary(glm(Count ~ Will,
+            data = COCA_type_long, family = 'poisson'))
+
+## Hapax models:
+
+summary(glm(Count ~ Shen,
+            data = COCA_hapax_long, family = 'poisson'))
+summary(glm(Count ~ Ull,
+            data = COCA_hapax_long, family = 'poisson'))
+summary(glm(Count ~ Will,
+            data = COCA_hapax_long, family = 'poisson'))
+
+## Token BIC:
+
+BIC(glm(Count ~ Shen,
+        data = COCA_token_long, family = 'poisson'))
+BIC(glm(Count ~ Ull,
+        data = COCA_token_long, family = 'poisson'))
+BIC(glm(Count ~ Will,
+        data = COCA_token_long, family = 'poisson'))
+
+## Type BIC:
+
+BIC(glm(Count ~ Shen,
+        data = COCA_type_long, family = 'poisson'))
+BIC(glm(Count ~ Ull,
+        data = COCA_type_long, family = 'poisson'))
+BIC(glm(Count ~ Will,
+        data = COCA_type_long, family = 'poisson'))
+
+## Hapax BIC:
+
+BIC(glm(Count ~ Shen,
+        data = COCA_hapax_long, family = 'poisson'))
+BIC(glm(Count ~ Ull,
+        data = COCA_hapax_long, family = 'poisson'))
+BIC(glm(Count ~ Will,
+        data = COCA_hapax_long, family = 'poisson'))
+```
+
+## What's the baseline?
+
+We can create a "baseline" by looking at all the possible combinations of Lynott and Connell (2009).
+
+First, the setup:
+
+```{r baseline_setup}
+## Take unique adjectives of Lynott & Connell (2009) and combine with Strik Lievers (2015):
+
+allc <- as_tibble(expand.grid(lyn$Word, strik$Word))
+
+## Merge with modality info:
+
+allc <- allc %>%
+  rename(Word = Var1,
+         Noun = Var2) %>%
+  left_join(dplyr::select(lyn, Word, DominantModality))
+allc <- allc %>%
+  left_join(strik,
+            by = c('Noun' = 'Word'))
+	
+## Rename for ease:
+
+allc <- rename(allc,
+               NounMod = Modality,
+               Mod = DominantModality)
+```
+
+We will now check how many of those "all combinations" fit the hierarchy, using only Shen's version of the hierarchy here.
+
+```{r check_match}
+## Check consistent cases:
+
+allc$MatchShen <- 'no'
+allc[allc$Mod == allc$NounMod, ]$MatchShen <- NA
+matches <- allc$Mod == 'Haptic' & allc$NounMod == 'Gustatory'
+matches <- matches |
+  (allc$Mod == 'Haptic' & allc$NounMod == 'Olfactory')
+matches <- matches |
+  (allc$Mod == 'Haptic' & allc$NounMod == 'Auditory')
+matches <- matches |
+  (allc$Mod == 'Haptic' & allc$NounMod == 'Visual')
+matches <- matches |
+  (allc$Mod == 'Gustatory' & allc$NounMod == 'Olfactory')
+matches <- matches |
+  (allc$Mod == 'Gustatory' & allc$NounMod == 'Auditory')
+matches <- matches |
+  (allc$Mod == 'Gustatory' & allc$NounMod == 'Visual')
+matches <- matches |
+  (allc$Mod == 'Olfactory' & allc$NounMod == 'Auditory')
+matches <- matches |
+  (allc$Mod == 'Olfactory' & allc$NounMod == 'Visual')
+matches <- matches | (allc$Mod == 'Auditory' & allc$NounMod == 'Visual')
+matches <- matches |
+  (allc$Mod == 'Visual' & allc$NounMod == 'Auditory')
+allc[matches, ]$MatchShen <- 'yes'
+
+## Calculate:
+
+table(allc$MatchShen)
+prop.table(table(allc$MatchShen))
+
+## Binomial test of this:
+
+binom.test(rev(table(allc$MatchShen)),
+           p = sum(shen.matches) / 20)
+nrow(na.omit(allc))
+nrow(na.omit(allc)) / nrow(allc)
+
+## Crosstabulate:
+
+xtab <- table(allc$Mod, allc$NounMod)
+diag(xtab) <- NA
+
+## Source and target sums:
+
+rowSums(xtab, na.rm = TRUE)
+colSums(xtab, na.rm = TRUE)
+
+## Source-target ratios:
+
+rowSums(xtab, na.rm = TRUE) /
+  colSums(xtab, na.rm = TRUE)
+round(rowSums(xtab, na.rm = TRUE) /
+        colSums(xtab, na.rm = TRUE), 2)
+```
+
+## Influence of valence and iconicity
+
+Merge valence and iconicity in there:
+
+```{r valence_merge}
+COCA <- left_join(COCA, war,
+                  by = c('Word' = 'Word'))
+COCA <- left_join(COCA, snef,
+                  by = c('Word' = 'Word'))
+COCA <- left_join(COCA, icon,
+                  by = c('Word' = 'Word'))
+```
+
+Fit a logistic regression of same/different as a function of absolute valence:
+
+```{r absval_mods, cache = TRUE}
+## Code factor so that we model change towards "different":
+
+COCA <- mutate(COCA,
+               Same = factor(Same, level = c('yes', 'no')))
+
+## Valence and context valence:
+
+summary(absval.mdl <- glmer(Same ~ AbsVal +
+                              (1|Word) +
+                              (1 + AbsVal|Noun),
+                            data = COCA, family = 'binomial'))
+summary(absval_context.mdl <- glmer(Same ~ ContextAbsVal +
+                                      (1|Word) +
+                                      (1 + ContextAbsVal|Noun),
+                                    data = COCA, family = 'binomial'))
+summary(icon.mdl <- glmer(Same ~ Iconicity +
+                            (1|Word) +
+                            (1 + Iconicity|Noun),
+                          data = COCA, family = 'binomial',
+                          control = glmerControl(optimizer = 'bobyqa')))
+```
+
+The emotional valence and iconicity effects may be driven by gustatory/olfactory strength and auditory strength ... thus, they may actually be modality-specific effects in disguise. It is thus useful to consider the respective perceptual strength measures as covariates, to assess the extent to which the two linguistic factors survive if those are controlled for.
+
+```{r percept_strength_check, cache = TRUE}
+## Valence and context valence:
+
+summary(absval_gus.mdl <- glmer(Same ~ AbsVal +
+                                  GustatoryStrengthMean +
+                                  OlfactoryStrengthMean +
+                              (1|Word) +
+                              (1 + AbsVal|Noun),
+                            data = COCA, family = 'binomial'))
+COCA <- mutate(COCA,
+               gus_c = GustatoryStrengthMean - mean(GustatoryStrengthMean),
+               olf_c = OlfactoryStrengthMean - 
+                 mean(OlfactoryStrengthMean),
+               absval_c = ContextAbsVal -
+                 mean(ContextAbsVal, na.rm = TRUE))
+summary(absval_context_gus.mdl <- glmer(Same ~ absval_c +
+                                      olf_c +
+                                      gus_c +
+                                      (1|Word) +
+                                      (1 + absval_c|Noun),
+                                    data = COCA, family = 'binomial'))
+summary(icon_aud.mdl <- glmer(Same ~ Iconicity +
+                                AuditoryStrengthMean +
+                                (1|Word) +
+                                (1 + Iconicity|Noun),
+                          data = COCA, family = 'binomial'))
+```
+
+Absolute valence has a strong positive effect, even if controlling for gustatory and olfactory strength (which are higher in valence). This model also has no convergence issues.
+
+There is a weird and unpredicted negative relationship with context valence in a model that also has convergence issues.
+
+The iconicity effect goes away once auditory strength is controlled for. The model also has convergence issues, however.
+
+Check whether the iconicity effect works separately for sound. This analysis is motivated because in the main analysis, iconicity is confounded with auditory strength and incorporating auditory strength into the main model leads to convergence issues. Thus, it is useful to see whether the effect works within sound words. 
+
+```{r sound_subset}
+sound <- filter(COCA, DominantModality == 'Auditory')
+summary(icon_subset.mdl <- glmer(Same ~ Iconicity +
+                                (1|Word) +
+                                (1 + Iconicity|Noun),
+                          data = sound, family = 'binomial',
+                          control = glmerControl(optimizer = 'bobyqa')))
+```
+
+(There are convergence issues for this model as well, but it's still comforting to know that the pattern works within sound as well.)
+
+Odds ratios for reporting:
+
+```{r odds}
+exp(fixef(absval.mdl)['AbsVal'])
+exp(fixef(absval_context.mdl)['ContextAbsVal'])
+exp(fixef(icon.mdl)['Iconicity'])
+```
+
+Get predictions for the two models with significant terms (absolute valence and iconicity). First, we define the predictor space:
+
+```{r lmer_preds}
+## Check range:
+
+range(COCA$AbsVal, na.rm = TRUE)
+range(COCA$Iconicity, na.rm = TRUE)
+
+## Define predictors:
+
+AbsVal <- seq(-1, 3, 0.01)
+Iconicity <- seq(-3, 6, 0.01)
+```
+
+Extract the predictions from the model:
+
+```{r lmer_get_preds}
+absval_pred <- predict.glmm(fit = absval.mdl,
+             newdata = tibble(AbsVal),
+             type = 'binomial')
+icon_pred <- predict.glmm(fit = icon.mdl,
+             newdata = tibble(Iconicity),
+             type = 'binomial')
+```
+
+Make a double-plot of this.
+
+```{r lmer_plots, fig.width = 10, fig.height = 5}
+## Make a plot of the exclusivity distributions:
+
+set.seed(42)
+quartz('', 11, 4)
+par(mfrow = c(1,2),
+    mai = c(0.25, 0.25, 0.25, 0.25),
+    omi = c(0.6, 1.5, 0.25, 0.25))
+
+# Plot 1:
+plot(1, 1, type = 'n', xlim = c(0, 2.5),
+     ylim = c(-0.1, 1.3),
+     yaxs = 'i', xlab = '',
+     ylab = '', xaxt = 'n', yaxt = 'n')
+plot_AB(xlim = c(0, 2.5),
+        ylim = c(-0.1, 1.3), AB = '(a)',
+        xfactor = 0.02, yfactor = 0.08)
+# Axes:
+abline(h = c(0, 1), lty = 2)
+points(COCA$AbsVal,
+       jitter(as.numeric(COCA$Same) - 1, factor = 0.2),
+       bg = rgb(0, 0, 0, 0.12), pch = 21, cex = 0.85, col = NA)
+axis(side = 1, at = seq(0, 2.5, 0.5),
+     lwd = 3, labels = FALSE)
+axis(side = 1, at = seq(0, 2.5, 0.5),
+     tick = FALSE, labels = TRUE,
+     font = 2, line = 0.25, cex.axis = 1.5)
+mtext(side = 1, line = 3.05, text = 'Absolute valence',
+      cex = 1.6, font = 2)
+axis(side = 2, at = seq(0, 5, 1),
+     tick = TRUE, labels = TRUE,
+     font = 2, cex.axis = 1.5, las = 2, lwd = 3)
+mtext(side = 2, line = 3.2, text = "Probability of 'different'",
+      cex = 1.6, font = 2)
+# Plot data:
+xseq <- c(absval_pred$AbsVal,
+          rev(absval_pred$AbsVal))
+yseq <- c(absval_pred$LB,
+          rev(absval_pred$UB))
+polygon(xseq, yseq,
+        border = NA, col = rgb(0, 0, 0, 0.4))
+with(absval_pred,
+     points(AbsVal, Same, type = 'l', lwd = 2))
+box(lwd = 3)
+
+# Plot 2:
+plot(1, 1, type = 'n', xlim = c(-2.5, 5),
+     ylim = c(-0.1, 1.3), yaxs = 'i',
+     xlab = '', ylab = '', xaxt = 'n', yaxt = 'n')
+plot_AB(xlim = c(-2.5, 5),
+        ylim = c(-0.1, 1.3), AB = '(b)',
+        xfactor = 0.02, yfactor = 0.08)
+# Axes:
+abline(h = c(0, 1), lty = 2)
+points(COCA$Iconicity,
+       jitter(as.numeric(COCA$Same) - 1, factor = 0.2),
+       bg = rgb(0, 0, 0, 0.12), pch = 21, cex = 0.85, col = NA)
+axis(side = 1, at = seq(-2.5, 5, 2.5),
+     lwd = 3, labels = F)
+axis(side = 1, at = seq(-2.5, 5, 2.5),
+     tick = FALSE, labels = TRUE,
+     font = 2, line = 0.25, cex.axis = 1.5)
+mtext(side = 1, line = 3.05, text = 'Iconicity',
+      cex = 1.6, font = 2)
+# Plot data:
+xseq <- c(icon_pred$Iconicity,
+          rev(icon_pred$Iconicity))
+yseq <- c(icon_pred$LB,
+          rev(icon_pred$UB))
+polygon(xseq, yseq,
+        border = NA, col = rgb(0, 0, 0, 0.4))
+with(icon_pred,
+     points(Iconicity, Same, type = 'l', lwd = 2))
+box(lwd = 3)
+```
+
+## Check how much you can get done with the three-largest cells
+
+This is reported throughout the chapter. How much can we get done with just the three largest cells?
+
+```{r percentages}
+# Get the three biggest one each:
+
+token3 <- rev(sort(as.vector(COCA_token_NA)))[1:3]
+type3 <- rev(sort(as.vector(COCA_type_NA)))[1:3]
+hapax3 <- rev(sort(as.vector(COCA_hapax_NA)))[1:3]
+
+# How much percentage is this?
+
+sum(token3) / sum(COCA_token_NA, na.rm = TRUE)
+sum(type3) / sum(COCA_type_NA, na.rm = TRUE)
+sum(hapax3) / sum(COCA_hapax_NA, na.rm = TRUE)
+
+# How much percentage of the hierarchy-consistent is this?
+
+sum(token3) / sum(COCA_token_NA[shen.matches])
+sum(type3) / sum(COCA_type_NA[shen.matches])
+sum(hapax3) / sum(COCA_hapax_NA[shen.matches])
+
+```
+
+## Valence, iconicity and cosines
+
+Repeat the analaysis with cosines. First, load the cosines in and then merge em with the predictor data.
+
+```{r cosine_prepare, message = FALSE}
+adj <- read_csv('../processed-data/combinations_with_cosines.csv')
+adj <- left_join(adj, war,
+                 by = c('Word' = 'Word'))
+adj <- left_join(adj, snef,
+                 by = c('Word' = 'Word'))
+adj <- left_join(adj, icon,
+                 by = c('Word' = 'Word'))
+```
+
+Next, we see whether each one of the predictors predicts cosines.
+
+```{r cosine_mods, cache = TRUE}
+## Valence:
+
+summary(absval.cos <- lmer(Cosine ~ AbsVal +
+                              (1|Word) +
+                              (1 + AbsVal|Noun),
+                            data = adj, REML = FALSE))
+absval.cos.null <- lmer(Cosine ~ 1 +
+                              (1|Word) +
+                              (1 + AbsVal|Noun),
+                            data = adj, REML = FALSE)
+anova(absval.cos.null,
+      absval.cos, test = 'Chisq')
+save(absval.cos, file = '../models/absval.cos.mdl')
+
+## Context valence:
+
+summary(absval.context.cos <- lmer(Cosine ~ ContextAbsVal +
+                              (1|Word) +
+                              (1 + ContextAbsVal|Noun),
+                            data = adj, REML = FALSE))
+absval.context.cos.null <- lmer(Cosine ~ 1 +
+                              (1|Word) +
+                              (1 + ContextAbsVal|Noun),
+                            data = adj, REML = FALSE)
+anova(absval.context.cos.null,
+      absval.context.cos, test = 'Chisq')
+save(absval.context.cos, file = '../models/absval.context.cos.mdl')
+
+## Iconicity:
+
+summary(iconicity.cos <- lmer(Cosine ~ Iconicity +
+                              (1|Word) +
+                              (1 + Iconicity|Noun),
+                            data = adj, REML = FALSE))
+iconicity.cos.null <- lmer(Cosine ~ 1 +
+                              (1|Word) +
+                              (1 + Iconicity|Noun),
+                            data = adj, REML = FALSE)
+anova(iconicity.cos.null,
+      iconicity.cos, test = 'Chisq')
+save(iconicity.cos, file = '../models/iconicity.cos.mdl')
+```
+
+Do the same thing with controls for gustatory/olfactory/auditory strength:
+
+```{r cosine_mods_controlled, cache = TRUE}
+## Valence:
+
+summary(absval_gus.cos <- lmer(Cosine ~ AbsVal +
+                                 AdjGustatoryStrengthMean +
+                                 AdjOlfactoryStrengthMean +
+                              (1|Word) +
+                              (1 + AbsVal|Noun),
+                            data = adj, REML = FALSE))
+absval_gus.cos.null <- lmer(Cosine ~ 1 +
+                          AdjGustatoryStrengthMean +
+                          AdjOlfactoryStrengthMean +
+                              (1|Word) +
+                              (1 + AbsVal|Noun),
+                            data = adj, REML = FALSE)
+anova(absval_gus.cos.null,
+      absval_gus.cos, test = 'Chisq')
+save(absval_gus.cos, file = '../models/absval_gus.cos.mdl')
+
+## Context valence:
+
+summary(absval.context_gus.cos <- lmer(Cosine ~ ContextAbsVal +
+                                         AdjGustatoryStrengthMean +
+                                         AdjOlfactoryStrengthMean +
+                              (1|Word) +
+                              (1 + ContextAbsVal|Noun),
+                            data = adj, REML = FALSE))
+absval.context_gus.cos.null <- lmer(Cosine ~ 1 +
+                                      AdjGustatoryStrengthMean +
+                                      AdjOlfactoryStrengthMean +
+                              (1|Word) +
+                              (1 + ContextAbsVal|Noun),
+                            data = adj, REML = FALSE)
+anova(absval.context_gus.cos.null,
+      absval.context_gus.cos, test = 'Chisq')
+save(absval.context_gus.cos, file = '../models/absval.context_gus.cos.mdl')
+
+## Iconicity:
+
+summary(iconicity_aud.cos <- lmer(Cosine ~ Iconicity +
+                                AdjAuditoryStrengthMean +
+                              (1|Word) +
+                              (1 + Iconicity|Noun),
+                            data = adj, REML = FALSE))
+iconicity_aud.cos.null <- lmer(Cosine ~ 1 +
+                                 AdjAuditoryStrengthMean +
+                              (1|Word) +
+                              (1 + Iconicity|Noun),
+                            data = adj, REML = FALSE)
+anova(iconicity_aud.cos.null,
+      iconicity_aud.cos, test = 'Chisq')
+save(iconicity_aud.cos, file = '../models/iconicity_aud.cos.mdl')
+```
+
+Finally, a subset-analysis of iconicity on auditory words only:
+
+```{r cos_aud_only, cache = TRUE}
+## Iconicity:
+
+sound_only <- filter(adj, DominantModality.x == 'Auditory')
+summary(iconicity_aud_subset.cos <- lmer(Cosine ~ Iconicity +
+                              (1|Word) +
+                              (1 + Iconicity|Noun),
+                            data = sound_only, REML = FALSE))
+iconicity_aud_subset.cos.null <- lmer(Cosine ~ 1 +
+                              (1|Word) +
+                              (1 + Iconicity|Noun),
+                            data = sound_only, REML = FALSE)
+anova(iconicity_aud_subset.cos.null,
+      iconicity_aud_subset.cos, test = 'Chisq')
+save(iconicity_aud_subset.cos, file = '../models/iconicity_aud_subset.cos.mdl')
+```
+
+Check this with averages:
+
+```{r avg_cos}
+COCA_avg <- adj %>%
+  group_by(Word) %>% 
+  summarize(Cosine = mean(Cosine),
+            AbsVal = mean(AbsVal),
+            ContextAbsVal = mean(ContextAbsVal),
+            Iconicity = mean(Iconicity),
+            GustatoryStrengthMean = mean(AdjGustatoryStrengthMean),
+            OlfactoryStrengthMean = mean(AdjOlfactoryStrengthMean),
+            AuditoryStrengthMean = mean(AdjAuditoryStrengthMean))
+
+# Analyses of averaged data:
+
+summary(lm(Cosine ~ Iconicity + AbsVal, data = COCA_avg))
+summary(lm(Cosine ~ Iconicity + ContextAbsVal, data = COCA_avg))
+
+# Analyses of averages:
+
+summary(lm(Cosine ~ Iconicity + AbsVal +
+             GustatoryStrengthMean +
+             OlfactoryStrengthMean +
+             AuditoryStrengthMean,
+           data = COCA_avg))
+summary(lm(Cosine ~ Iconicity + ContextAbsVal + 
+             GustatoryStrengthMean +
+             OlfactoryStrengthMean +
+             AuditoryStrengthMean, data = COCA_avg))
+```
+
+Get predictions for the two models with significant terms (absolute valence and iconicity). First, we define the predictor space:
+
+```{r lmer_preds_cos}
+## Check range:
+
+range(adj$ContextAbsVal, na.rm = TRUE)
+range(adj$Iconicity, na.rm = TRUE)
+
+## Define predictors:
+
+ContextAbsVal <- seq(-1, 3, 0.01)
+Iconicity <- seq(-3, 6, 0.01)
+```
+
+Extract the predictions from the model:
+
+```{r lmer_cos_get_preds}
+absval.context.cos_pred <- predict.glmm(fit = absval.context.cos,
+             newdata = tibble(ContextAbsVal),
+             type = 'gaussian')
+iconicity.cos_pred <- predict.glmm(fit = iconicity.cos,
+             newdata = tibble(Iconicity),
+             type = 'gaussian')
+```
+
+Make a double-plot of this.
+
+```{r lmer_cos_plots, fig.width = 10, fig.height = 5}
+## Make a plot of the exclusivity distributions:
+
+set.seed(42)
+quartz('', 11, 4)
+par(mfrow = c(1,2),
+    mai = c(0.25, 0.25, 0.25, 0.25),
+    omi = c(0.6, 1.5, 0.25, 0.25))
+
+# Plot 1:
+plot(1, 1, type = 'n', xlim = c(0, 2.5),
+     ylim = c(0.5, 1.0),
+     yaxs = 'i', xlab = '',
+     ylab = '', xaxt = 'n', yaxt = 'n')
+plot_AB(xlim = c(0, 2.5),
+        ylim = c(0.5, 1.0), AB = '(a)',
+        xfactor = 0.02, yfactor = 0.08)
+# Axes:
+abline(h = c(0, 1), lty = 2)
+axis(side = 1, at = seq(0, 2.5, 0.5),
+     lwd = 3, labels = FALSE)
+axis(side = 1, at = seq(0, 2.5, 0.5),
+     tick = FALSE, labels = TRUE,
+     font = 2, line = 0.25, cex.axis = 1.5)
+mtext(side = 1, line = 3.05, text = 'Absolute context valence',
+      cex = 1.6, font = 2)
+axis(side = 2, at = seq(0.5, 1, 0.25),
+     tick = TRUE, labels = TRUE,
+     font = 2, cex.axis = 1.5, las = 2, lwd = 3)
+mtext(side = 2, line = 4.5, text = "Cosine similarity",
+      cex = 1.6, font = 2)
+# Plot data:
+xseq <- c(absval.context.cos_pred$ContextAbsVal,
+          rev(absval.context.cos_pred$ContextAbsVal))
+yseq <- c(absval.context.cos_pred$LB,
+          rev(absval.context.cos_pred$UB))
+polygon(xseq, yseq,
+        border = NA, col = rgb(0, 0, 0, 0.4))
+with(absval.context.cos_pred,
+     points(ContextAbsVal, Cosine, type = 'l', lwd = 2))
+box(lwd = 3)
+
+# Plot 2:
+plot(1, 1, type = 'n', xlim = c(-2.5, 5),
+     ylim = c(0.5, 1.0), yaxs = 'i',
+     xlab = '', ylab = '', xaxt = 'n', yaxt = 'n')
+plot_AB(xlim = c(-2.5, 5),
+        ylim = c(0.5, 1.0), AB = '(b)',
+        xfactor = 0.02, yfactor = 0.08)
+# Axes:
+abline(h = c(0, 1), lty = 2)
+axis(side = 1, at = seq(-2.5, 5, 2.5),
+     lwd = 3, labels = F)
+axis(side = 1, at = seq(-2.5, 5, 2.5),
+     tick = FALSE, labels = TRUE,
+     font = 2, line = 0.25, cex.axis = 1.5)
+mtext(side = 1, line = 3.05, text = 'Iconicity',
+      cex = 1.6, font = 2)
+# Plot data:
+xseq <- c(iconicity.cos_pred$Iconicity,
+          rev(iconicity.cos_pred$Iconicity))
+yseq <- c(iconicity.cos_pred$LB,
+          rev(iconicity.cos_pred$UB))
+polygon(xseq, yseq,
+        border = NA, col = rgb(0, 0, 0, 0.4))
+with(iconicity.cos_pred,
+     points(Iconicity, Cosine, type = 'l', lwd = 2))
+box(lwd = 3)
+```
+
+This completes the analyses presented in Chapter 17.
+

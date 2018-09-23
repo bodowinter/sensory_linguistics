@@ -1,0 +1,775 @@
+---
+title: "Chapter 13 - Correlations and clusters"
+author: "Bodo Winter"
+date: "8/24/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This is the analysis for Chapter 13. Part I starts by looking at correlations between the senses. The PCA from Lynott and Connell (2009) is repeated here. Part II performs a cluster analysis to look at smaller subgroupings within the raw scores.
+
+We begin by loading in the data and libraries.
+
+```{r packages_data, message = FALSE}
+## Libraries:
+
+library(png)		# for plotting sensory modality images
+library(GISTools)	# for adding alpha to hex values
+library(plotrix)	# for plotting circles
+library(mclust) # for cluster analysis
+library(tidyverse)
+library(stringr)
+
+## Load data:
+
+lyn <- read_csv('../raw-data/modality_lynott_connell_2009.csv')
+noun <- read_csv('../raw-data/modality_lynott_connell_2013.csv')
+```
+
+Some more preprocessing:
+
+```{r preprocessing}
+## Vector of modality names:
+
+mymods <- c('Visual', 'Haptic', 'Auditory',
+            'Gustatory', 'Olfactory')
+
+## Vector of column names:
+
+mymods_names <- str_c(mymods, 'StrengthMean')
+
+## Load plotting functions:
+
+source('../functions/emptyplot.R')
+```
+
+We will use the image data (from freepix.com). So let's load in images and specify the color values.
+
+```{r image_setup}
+## Load in images:
+
+setwd('/Users/winterb/Books/words_of_sense/analysis/figures/')
+s1 <- readPNG('../figures/sight.png')
+s2 <- readPNG('../figures/touch.png')
+s3 <- readPNG('../figures/sound.png')
+s4 <- readPNG('../figures/taste.png')
+s5 <- readPNG('../figures/smell.png')
+
+## Define vector of names:
+
+sense_names <- str_c('s', 1:5)
+
+## Define colors:
+
+mycols <- c('#f37058', '#f79038', '#efbe1b',
+            '#425fac', '#30b77d')
+```
+
+## Principal Components Analysis (PCA)
+
+We look at correlations between the senses with a simple PCA. For this, we extract a matrix of the sensory ratings and standardize this matrix.
+
+```{r get_matrix}
+## Get matrix of adjectives:
+
+adjm <- as.matrix(lyn[ , mymods_names])
+rownames(adjm) <- lyn$Word
+
+## Standardize matrix:
+
+adjm <- apply(adjm, 2,
+	FUN = function(x) (x - mean(x)) / sd(x))
+```
+
+Next we compute the PCA.
+
+```{r perform_PCA}
+## Get PCAs:
+
+adj_pca <- prcomp(adjm, center = TRUE, scale = TRUE)
+	# prcomp preferred over princomp because SVD has more numerical precision
+
+## Inspect:
+
+summary(adj_pca)
+
+## Inspect loadings:
+
+round(adj_pca$rotation, 1)
+```
+
+To explore this structure further, we plot the first two dimensions into a 2D plane.
+
+```{r PCA_2D}
+## Get first two scores for plotting:
+
+adj2 <- adj_pca$x[, 1:2]
+
+## Define factor order for correct color plotting:
+
+myfacs <- factor(lyn$DominantModality,
+	levels = c('Visual', 'Haptic', 'Auditory', 'Gustatory', 'Olfactory'))
+
+## Get means per modality for plotting sense symbols:
+
+adj2_plot <- as_tibble(adj2)
+adj2_plot$Modality <- lyn$DominantModality
+sense_pos <- adj2_plot %>% group_by(Modality) %>%
+	summarize(C1 = mean(PC1),
+		C2 = mean(PC2))
+sense_pos$Modality <- c('s3', 's4', 's2', 's5', 's1')
+
+## Plot the first two dimensions:
+
+quartz('', 9, 7)
+par(mai = c(1.5, 1.5, 0.5, 0.5))
+emptyplot(xlim = c(-4, 2),
+          ylim = c(-2, 4), AB = '')
+abline(h = 0, lty = 2); abline(v = 0, lty = 2)
+axis(side = 1,
+     at = seq(-4, 2, 1), lwd.ticks = 2,
+     lwd = 2, font = 2, cex.axis = 1.25)
+mtext(side = 1, line = 3.6,
+      text = 'Component 1 scores', cex = 1.9, font = 2)
+axis(side = 2,
+     at = seq(-2, 4, 1), lwd.ticks = 2,
+     lwd = 2, font = 2, cex.axis = 1.25, las = 2)
+mtext(side = 2, line = 3.6,
+      text = 'Component 2 scores', cex = 1.9, font = 2)
+points(adj2_plot[, 1:2], pch = 16, cex = 1.3,
+       col = add.alpha(mycols[as.numeric(myfacs)], 0.8))
+for (i in c(5, 3, 2, 4, 1)) {
+  rasterImage(get(pull(sense_pos[i, 1])),
+              xleft = sense_pos[i, ]$C1 - 0.19,
+              xright = sense_pos[i, ]$C1 + 0.19,
+              ybottom = sense_pos[i, ]$C2 - 0.28,
+              ytop = sense_pos[i, ]$C2 + 0.28, xpd = NA)	
+  draw.circle(x = sense_pos[i, ]$C1,
+              y = sense_pos[i, ]$C2, radius = 0.19, lwd = 2.5)
+	}
+```
+
+Next, we create a variable coordinate plot, with code from:
+
+http://www.sthda.com/english/wiki/principal-component-analysis-in-r-prcomp-vs-princomp-r-software-and-data-mining
+
+```{r var_coord_plot}
+
+## Helper function: for correlation between variables and components:
+var_cor_func <- function(var.loadings, comp.sdev) {
+  var.loadings * comp.sdev
+  }
+
+## Extract variable correlation/coordinates:
+
+loadings <- adj_pca$rotation
+sdev <- adj_pca$sdev
+var.coord <- var.cor <- t(apply(loadings, 1, var_cor_func, sdev))
+
+## Change names:
+
+rownames(var.coord) <- c('Sight', 'Sound',
+                         'Touch', 'Taste', 'Smell')
+
+## Re-order to reflect modality order:
+
+var.coord <- var.coord[c(1, 3, 2, 4, 5), ]
+
+## Plot the correlation circle:
+
+a <- seq(0, 2*pi, length = 100)
+quartz('', 9, 6)
+par(mai = c(1.5, 1.75, 0.5, 1))
+plot(cos(a), sin(a), type = 'l', col = 'gray',	# plots circle
+     xlim = c(-1.2, 1.2), ylim = c(-1.2, 1.2),
+     bty = 'n', xaxt = 'n', yaxt = 'n',
+     xlab = '', ylab = '')
+axis(side = 1, at = seq(-1, 1, 0.5), font = 2,
+     lwd = 2, lwd.ticks = 2, cex.axis = 1.25)
+axis(side = 2, at = seq(-1, 1, 0.5), font = 2,
+     lwd = 2, lwd.ticks = 2, cex.axis = 1.25, las = 2)
+mtext(side = 1, line = 4.25, font = 2, cex = 2,
+      text = 'Principal Component 1')
+mtext(side = 2, line = 4.25, font = 2, cex = 2,
+      text = 'Principal Component 2')
+abline(h = 0, v = 0, lty = 2)
+# Add active variables
+arrows(0, 0, var.coord[, 1], var.coord[, 2], 
+       length = 0.1, angle = 15, code = 2, col = mycols,
+       lwd = 2)
+# Add labels:
+var.coord_adj <- var.coord[, 1:2]
+var.coord_adj[, 1] <- var.coord_adj[, 1] +
+  c(0.23, 0.12, 0.06, -0.025, -0.025)
+var.coord_adj[, 2] <- var.coord_adj[, 2] +
+  c(-0.1, +0.08, -0.09, -0.045, +0.045)
+text(var.coord_adj, labels = rownames(var.coord),
+     adj = 1, col = mycols, font = 2, cex = 1.5)
+box(lwd = 2)
+```
+
+## Cluster analysis on PCA scores
+
+For all cluster analysis, originally version 5.2 was used, which used a different algorithm. Check description of version 5.4 on this page:
+
+https://github.com/cran/mclust/blob/master/inst/NEWS
+
+```{r set_optins}
+mclust.options(hcUse = "VARS")
+```
+
+The following analysis is NOT reported in the main body of the text. The cluster analysis is an exploratory analysis and the 15-cluster solution reported in the paper was much more interpretable from a theoretical perspective. The three-cluster solution is based on the elbow-method since there is a noticeable dip in the scree plot.
+
+```{r PCA_clust}
+## Gaussian mixture models:
+
+xclust <- Mclust(adj2, G = 1:15)
+summary(xclust, parameters = TRUE)
+
+## Plot BIC etc.:
+
+plot(xclust)	# suggests BIC elbow for 3 components (heuristic)
+
+## What is the optimal number of mixture components, maximizing BIC?
+
+xclust$G	# 8
+
+## Enforce a three-cluster solution:
+
+xclust3 <- Mclust(adj2, G = 1:3)
+xclust3$G
+
+## Get three-cluster classifications and uncertainties:
+
+lyn$Classes3 <- xclust3$classification
+lyn$Uncertainty3 <- xclust3$uncertainty
+
+## Tabulate:
+
+with(filter(lyn, Uncertainty3 < 0.06),
+     table(Classes3, DominantModality))
+
+## Check words:
+
+filter(lyn, Uncertainty3 < 0.06, Classes3 == 1) %>%
+  arrange(Uncertainty3) %>% pull(Word)
+filter(lyn, Uncertainty3 < 0.06, Classes3 == 2) %>%
+  arrange(Uncertainty3) %>% pull(Word)
+filter(lyn, Uncertainty3 < 0.06, Classes3 == 3) %>%
+  arrange(Uncertainty3) %>% pull(Word)
+
+## Extract 8 cluster classifications and uncertainties:
+
+lyn$Classes <- xclust$classification
+lyn$Uncertainty <- xclust$uncertainty
+
+## Tabulate:
+
+with(filter(lyn, Uncertainty < 0.15),
+     table(Classes, DominantModality))
+```
+
+The three-cluster solution appears to converge on the following three clusters. A sound cluster. A highly multisensory cluster that includes taste and smell. And a touch/sight cluster that excludes taste and smell.
+
+Check the words that emerge from this cluster solution.
+
+```{r PCA_clust_words}
+## Check words:
+
+filter(lyn, Classes == 1) %>%
+  arrange(Uncertainty) %>% pull(Word)
+filter(lyn, Classes == 2) %>%
+  arrange(Uncertainty) %>% pull(Word)
+filter(lyn, Classes == 3) %>%
+	arrange(Uncertainty) %>% pull(Word)
+filter(lyn, Classes == 4) %>%
+	arrange(Uncertainty) %>% pull(Word)
+filter(lyn, Classes == 5) %>%
+	arrange(Uncertainty) %>% pull(Word)
+filter(lyn, Classes == 6) %>%
+	arrange(Uncertainty) %>% pull(Word)
+filter(lyn, Classes == 7) %>%
+	arrange(Uncertainty) %>% pull(Word)
+filter(lyn, Classes == 8) %>%
+	arrange(Uncertainty) %>% pull(Word)
+```
+
+## Cluster analysis on raw scores (main analysis)
+
+```{r }
+## Gaussian mixture model of standardized matrix:
+
+xclust <- Mclust(adjm, G = 1:15)
+
+## Optimal number of clusts:
+
+xclust$G	# 12
+
+## Extract 12 cluster classifications and uncertainties:
+
+lyn$Classes <- xclust$classification
+lyn$Uncertainty <- xclust$uncertainty
+
+```
+
+## Size of clusters
+
+Let's look at the size of each cluster:
+
+```{r clust_size}
+## Tabulate:
+
+with(lyn,
+     clust_doms <<- table(Classes, DominantModality))
+clust_doms
+
+## Tabulate only certain ones:
+
+with(filter(lyn, Uncertainty < 0.15),
+     table(Classes, DominantModality))
+
+## Which are the biggest clusters?
+
+sort(table(lyn$Classes), decreasing = TRUE)
+```
+
+Look at which of the 12 clusters is predominantly of which modality?
+
+```{r clust_doms}
+mods <- colnames(clust_doms)
+table(mods[apply(clust_doms, 1, which.max)])
+```
+
+There are five predominantly visual clusters, and then basically the same for all other senses.
+
+## Assess words within clusters
+
+We first create a helper function to extract the words with that cluster.
+
+```{r main_clust_words}
+## Helper function for checking words:
+
+get_words <- function(df, class, n = NULL) {
+  words <- filter(df, Classes == class) %>%
+    arrange(Uncertainty) %>% pull(Word)	
+  return(words[1:n])
+	}
+
+```
+
+Check the average uncertainty per cluster:
+
+```{r clust_uncertainty}
+mean(filter(lyn, Classes == 1)$Uncertainty)
+mean(filter(lyn, Classes == 2)$Uncertainty)		# least
+mean(filter(lyn, Classes == 3)$Uncertainty)
+mean(filter(lyn, Classes == 4)$Uncertainty)
+mean(filter(lyn, Classes == 5)$Uncertainty)
+mean(filter(lyn, Classes == 6)$Uncertainty)
+mean(filter(lyn, Classes == 7)$Uncertainty)
+mean(filter(lyn, Classes == 8)$Uncertainty)
+mean(filter(lyn, Classes == 9)$Uncertainty)
+mean(filter(lyn, Classes == 10)$Uncertainty)
+mean(filter(lyn, Classes == 11)$Uncertainty)
+mean(filter(lyn, Classes == 12)$Uncertainty)
+```
+
+## Exploration of words:
+
+Next, we look at the words and form intuitive comparisons to guide our discussion in the chapter.
+
+```{r check_words}
+get_words(lyn, 2, 15)
+get_words(lyn, 3, 15)
+get_words(lyn, 4, 15)
+
+get_words(lyn, 8, 15)
+get_words(lyn, 9, 15)
+get_words(lyn, 10, 15)
+get_words(lyn, 11, 15)
+
+get_words(lyn, 1, 15)
+get_words(lyn, 12, 15)
+
+get_words(lyn, 5, 15)
+get_words(lyn, 7, 15)
+get_words(lyn, 12, 15)
+get_words(lyn, 1, 15)
+```
+
+## Plots of clusters
+
+Finally, we create plots for each cluster. We start by fixing some plotting parameters for the bar plots that will be generated.
+
+```{r barplot_pars}
+## Set bar width:
+
+xfac <- 0.15
+rast_fac <- 0.05
+```
+
+Next, we define the function that will create all barplots per cluster, which also uses the get_means() helper function.
+
+```{r clust_plot_fnc}
+## Function for extracting means per class:
+
+get_means <- function(df, class) {
+  df <- filter(df, Classes == class)
+	df <- dplyr::select(df, VisualStrengthMean:ModalityExclusivity)
+	return(apply(df, 2, mean))
+	}
+
+## Function for plotting modality norms and exclusivity:
+
+plot_class <- function(df, class,
+                       number, name, single = TRUE) {
+  xmeans <- get_means(df, class)
+	
+	if (single) {
+		quartz('', 9, 7.5)
+		par(mai = c(2.5, 1.75, 1.75, 1))
+		}
+		
+	if (single) {
+		plot(1, 1,
+		     type = 'n', xaxt = 'n', yaxt = 'n',
+		     xlab = '', ylab = '', bty = 'n',
+		     xlim = c(1, 6), ylim = c(0, 5))
+	  } else {
+	    plot(1, 1,
+		     type = 'n', xaxt = 'n', yaxt = 'n',
+		     xlab = '', ylab = '', bty = 'n',
+		     xlim = c(1, 6), ylim = c(0, 6))			
+			}
+	axis(side = 2, at = seq(0, 5, 1), las = 2,
+			font = 2, lwd = 2, lwd.ticks = 2, cex.axis = 1.5)
+	if (single) { mtext('Rating', side = 2,
+	                    line = 3.7, font = 2, cex = 2.5) }
+	if (single) {
+	mtext(str_c('Cluster ', number, ', ', '"', name, '"'),
+	      side = 3, line = 1.3, font = 2, cex = 2.05)
+	mtext(str_c(round(xmeans[6] * 100), '% exclusive, N = ',
+	            nrow(filter(df, Classes == class))),
+	      side = 3, line = -0.45, font = 2, cex = 1.5)
+		} else {
+		mtext(str_c('Cluster ', number, ', ', '"', name, '"'),
+		      side = 3, line = 1.3, font = 2, cex = 1.75)
+		mtext(str_c(round(xmeans[6] * 100), '% exclusive, N = ',
+		            nrow(filter(df, Classes == class))),
+		      side = 3, line = -0.45, font = 2, cex = 1.35)
+		}
+
+	for (i in 1:5) {
+		rect(xleft = i + xfac, xright = i + 1 - xfac,
+		     ybottom = 0, ytop = xmeans[i],
+		     col = mycols[i], lwd = 2)
+		rasterImage(get(sense_names[i]),
+		            xleft = i + xfac + rast_fac,
+		            xright = i + 1 - xfac - rast_fac,
+		            ybottom = -1.17 + rast_fac * 1.3,
+		            ytop = -0.1 - rast_fac * 1.3, xpd = NA)
+		}
+	
+	if (single) {
+	  text('Examples:', font = 2, cex = 1.8,
+	       x = 0.55, y = -1.85, xpd = NA)} else {
+	         text('Examples:', font = 2, cex = 1.8,
+	              x = 0.55, y = -1.85 - 1, xpd = NA)
+			}
+	this_lab1 <- str_c(get_words(lyn, class, 10)[1:5],
+	                   collapse = ', ')
+	this_lab2 <- str_c(get_words(lyn, class, 10)[6:10],
+	                   collapse = ', ')
+	this_lab <- str_c(this_lab1, ', \n', this_lab2)
+	if (single) {	
+	text(x = 1.2, y = -1.9, xpd = NA,
+		labels = this_lab,
+		font = 4, cex = 1.25, adj = 0, pos = 4)
+		} else {
+			text(x = -0.75, y = -3 - 1.2, xpd = NA,
+				labels = this_lab,
+				font = 4, cex = 1.15, pos = 4)
+			}
+	}
+```
+
+Finally, we create the individual plots.
+
+```{r all_plots}
+## Plot 1 (double), 'pure sight words' + 'shape & extent':
+
+quartz('', 11, 6)
+par(mfrow = c(1, 2), mai = c(1.9, 1.5, 1, 0.5), omi = c(0.5, 0, 0, 0.5))
+plot_class(lyn, 8, number = 1, name = 'pure sight', single = F)
+mtext('Rating', side = 2, line = 3.7, font = 2, cex = 2.5)
+plot_class(lyn, 9, number = 2, name = 'shape & extent', single = F)
+
+## Double plot 2:
+
+quartz('', 11, 6)
+par(mfrow = c(1, 2), mai = c(1.9, 1.5, 1, 0.5), omi = c(0.5, 0, 0, 0.5))
+plot_class(lyn, 12, number = 3, name = 'gross surface properties', single = F)
+mtext('Rating', side = 2, line = 3.7, font = 2, cex = 2.5)
+plot_class(lyn, 1, number = 4, name = 'motion, touch, & gravity', single = F)
+
+## Plot 3:
+
+quartz('', 11, 6)
+par(mfrow = c(1, 2), mai = c(1.9, 1.5, 1, 0.5), omi = c(0.5, 0, 0, 0.5))
+plot_class(lyn, 2, number = 5, name = 'skin & temperature', single = F)
+mtext('Rating', side = 2, line = 3.7, font = 2, cex = 2.5)
+plot_class(lyn, 3, number = 6, name = 'chemical senses', single = F)
+
+## Plot 4 (double):
+
+quartz('', 11, 6)
+par(mfrow = c(1, 2), mai = c(1.9, 1.5, 1, 0.5), omi = c(0.5, 0, 0, 0.5))
+plot_class(lyn, 6, number = 7, name = 'taste', single = F)
+mtext('Rating', side = 2, line = 3.7, font = 2, cex = 2.5)
+plot_class(lyn, 4, number = 8, name = 'smell', single = F)
+
+## Plot 5 (double):
+
+quartz('', 11, 6)
+par(mfrow = c(1, 2), mai = c(1.9, 1.5, 1, 0.5), omi = c(0.5, 0, 0, 0.5))
+plot_class(lyn, 10, number = 9, name = 'sound 1', single = F)
+mtext('Rating', side = 2, line = 3.7, font = 2, cex = 2.5)
+# axis(side = 2, at = seq(0, 5, 1), las = 2,
+	# font = 2, lwd = 2, lwd.ticks = 2, cex.axis = 1.5)
+plot_class(lyn, 11, number = 10, name = 'sound 2', single = F)
+
+## Plot 6 (double):
+
+quartz('', 11, 6)
+par(mfrow = c(1, 2), mai = c(1.9, 1.5, 1, 0.5), omi = c(0.5, 0, 0, 0.5))
+plot_class(lyn, 7, number = 11, name = 'impression-related', single = F)
+mtext('Rating', side = 2, line = 3.7, font = 2, cex = 2.5)
+plot_class(lyn, 5, number = 12, name = 'multisensory', single = F)
+
+```
+
+## Save clusters into data frame
+
+For the analyses in later chapters, we will need the clusters. So we extract them.
+
+We'll name the clusters for transparency.
+
+```{r name_clusters}
+## Name the clusters:
+
+lyn$Class <- lyn$Classes
+lyn[lyn$Classes == 1, ]$Class <- 'motion & touch'
+lyn[lyn$Classes == 2, ]$Class <- 'skin & temperature'
+lyn[lyn$Classes == 3, ]$Class <- 'chemical senses'
+lyn[lyn$Classes == 4, ]$Class <- 'smell'
+lyn[lyn$Classes == 5, ]$Class <- 'multimodal'
+lyn[lyn$Classes == 6, ]$Class <- 'taste'
+lyn[lyn$Classes == 7, ]$Class <- 'impression-related'
+lyn[lyn$Classes == 8, ]$Class <- 'pure sight'
+lyn[lyn$Classes == 9, ]$Class <- 'shape & extent'
+lyn[lyn$Classes == 10, ]$Class <- 'sound 1'
+lyn[lyn$Classes == 11, ]$Class <- 'sound 2'
+lyn[lyn$Classes == 12, ]$Class <- 'gross surface'
+```
+
+Next, we add all the relevant color and image information to the data frame.
+
+```{r class_add_color}
+## Make color identifiers for the different classes:
+
+lyn$Color <- mycols[1]	# vision
+lyn[lyn$Classes == 2, ]$Color <- mycols[which.max(get_means(lyn, 2)[1:5])]
+lyn[lyn$Classes == 3, ]$Color <- mycols[which.max(get_means(lyn, 3)[1:5])]
+lyn[lyn$Classes == 4, ]$Color <- mycols[which.max(get_means(lyn, 4)[1:5])]
+lyn[lyn$Classes == 5, ]$Color <- mycols[which.max(get_means(lyn, 5)[1:5])]
+lyn[lyn$Classes == 6, ]$Color <- mycols[which.max(get_means(lyn, 6)[1:5])]
+lyn[lyn$Classes == 7, ]$Color <- mycols[which.max(get_means(lyn, 7)[1:5])]
+lyn[lyn$Classes == 8, ]$Color <- mycols[which.max(get_means(lyn, 8)[1:5])]
+lyn[lyn$Classes == 9, ]$Color <- mycols[which.max(get_means(lyn, 9)[1:5])]
+lyn[lyn$Classes == 10, ]$Color <- mycols[which.max(get_means(lyn, 10)[1:5])]
+lyn[lyn$Classes == 11, ]$Color <- mycols[which.max(get_means(lyn, 11)[1:5])]
+lyn[lyn$Classes == 12, ]$Color <- mycols[which.max(get_means(lyn, 12)[1:5])]
+
+## Make image identifiers for the different classes:
+
+lyn$Image <- 's1'
+lyn[lyn$Classes == 2, ]$Image <- sense_names[which.max(get_means(lyn, 2)[1:5])]
+lyn[lyn$Classes == 3, ]$Image <- sense_names[which.max(get_means(lyn, 3)[1:5])]
+lyn[lyn$Classes == 4, ]$Image <- sense_names[which.max(get_means(lyn, 4)[1:5])]
+lyn[lyn$Classes == 5, ]$Image <- sense_names[which.max(get_means(lyn, 5)[1:5])]
+lyn[lyn$Classes == 6, ]$Image <- sense_names[which.max(get_means(lyn, 6)[1:5])]
+lyn[lyn$Classes == 7, ]$Image <- sense_names[which.max(get_means(lyn, 7)[1:5])]
+lyn[lyn$Classes == 8, ]$Image <- sense_names[which.max(get_means(lyn, 8)[1:5])]
+lyn[lyn$Classes == 9, ]$Image <- sense_names[which.max(get_means(lyn, 9)[1:5])]
+lyn[lyn$Classes == 10, ]$Image <- sense_names[which.max(get_means(lyn, 10)[1:5])]
+lyn[lyn$Classes == 11, ]$Image <- sense_names[which.max(get_means(lyn, 11)[1:5])]
+lyn[lyn$Classes == 12, ]$Image <- sense_names[which.max(get_means(lyn, 12)[1:5])]
+```
+
+Finally, we write this to a file.
+
+```{r write_classes}
+## Write to file:
+
+write_csv(lyn, '../processed-data/lyn_cluster.csv')
+```
+
+## Assess the relative distance and variance for different models
+
+First, let's get categories for sight/touch and taste/smell.
+
+```{r assign_3clust}
+chem <- c('Gustatory', 'Olfactory')
+touchy <- c('Visual', 'Haptic')
+lyn <- mutate(lyn,
+              LargeGroup = ifelse(DominantModality %in% chem,
+                                  'chem', DominantModality),
+              LargeGroup = ifelse(LargeGroup %in% touchy,
+                                  'touchy', LargeGroup))
+```
+
+Next, let's compute the variance within each group. For this, we need the cluster means.
+
+```{r clust_means}
+group3_means <- lyn %>%
+  group_by(LargeGroup) %>%
+  summarize(Vis = mean(VisualStrengthMean),
+            Hap = mean(HapticStrengthMean),
+            Aud = mean(AuditoryStrengthMean),
+            Gus = mean(GustatoryStrengthMean),
+            Olf = mean(OlfactoryStrengthMean))
+group12_means <- lyn %>%
+  group_by(Classes) %>%
+  summarize(Vis = mean(VisualStrengthMean),
+            Hap = mean(HapticStrengthMean),
+            Aud = mean(AuditoryStrengthMean),
+            Gus = mean(GustatoryStrengthMean),
+            Olf = mean(OlfactoryStrengthMean))  
+group5_means <- lyn %>%
+  group_by(DominantModality) %>%
+  summarize(Vis = mean(VisualStrengthMean),
+            Hap = mean(HapticStrengthMean),
+            Aud = mean(AuditoryStrengthMean),
+            Gus = mean(GustatoryStrengthMean),
+            Olf = mean(OlfactoryStrengthMean))  
+```
+
+Initialize empty columns to be filled with distance of each word to each cluster center:
+
+```{r clust_var_col_init}
+lyn$Class3_dist <- NA
+lyn$Class5_dist <- NA
+lyn$Class12_dist <- NA
+```
+
+Next, let's compute the variance within each cluster. For this, we need to compute the Euclidian distance of each word to each cluster mean.
+
+```{r clust_var_3}
+for (i in 1:nrow(group3_means)) {
+  # Get one of the three clusters:
+  this_mod <- group3_means[i, ]
+  
+  # Extract values only:
+  this_mod_vals <- unlist(this_mod[, 2:6])
+  
+  # Extract from the main data frame all words from that cluster:
+  all_lyn <- filter(lyn, LargeGroup == this_mod$LargeGroup)
+  
+  # And only the values:
+  all_lyn <- select(all_lyn, VisualStrengthMean:OlfactoryStrengthMean)
+  
+  # Initialize empty vector to be filled with distances:
+  mydists <- rep(NA, nrow(all_lyn))
+  
+  # Loop through subset and compute distances to cluster mean:
+  for (j in 1:nrow(all_lyn)) {
+    mydists[j] <- dist(rbind(all_lyn[j, ], this_mod_vals))
+  }
+  
+  lyn[lyn$LargeGroup == this_mod$LargeGroup, ]$Class3_dist <- mydists
+
+}
+```
+
+Same for dominant modality:
+
+```{r clust_var_5}
+for (i in 1:nrow(group5_means)) {
+  # Get one of the three clusters:
+  this_mod <- group5_means[i, ]
+  
+  # Extract values only:
+  this_mod_vals <- unlist(this_mod[, 2:6])
+  
+  # Extract from the main data frame all words from that cluster:
+  all_lyn <- filter(lyn, DominantModality == this_mod$DominantModality)
+  
+  # And only the values:
+  all_lyn <- select(all_lyn, VisualStrengthMean:OlfactoryStrengthMean)
+  
+  # Initialize empty vector to be filled with distances:
+  mydists <- rep(NA, nrow(all_lyn))
+  
+  # Loop through subset and compute distances to cluster mean:
+  for (j in 1:nrow(all_lyn)) {
+    mydists[j] <- dist(rbind(all_lyn[j, ], this_mod_vals))
+  }
+  
+  lyn[lyn$DominantModality == this_mod$DominantModality, ]$Class5_dist <- mydists
+
+}
+```
+
+Same for 12 clusters:
+
+```{r clust_var_12}
+for (i in 1:nrow(group12_means)) {
+  # Get one of the three clusters:
+  this_mod <- group12_means[i, ]
+  
+  # Extract values only:
+  this_mod_vals <- unlist(this_mod[, 2:6])
+  
+  # Extract from the main data frame all words from that cluster:
+  all_lyn <- filter(lyn, Classes == this_mod$Classes)
+  
+  # And only the values:
+  all_lyn <- select(all_lyn, VisualStrengthMean:OlfactoryStrengthMean)
+  
+  # Initialize empty vector to be filled with distances:
+  mydists <- rep(NA, nrow(all_lyn))
+  
+  # Loop through subset and compute distances to cluster mean:
+  for (j in 1:nrow(all_lyn)) {
+    mydists[j] <- dist(rbind(all_lyn[j, ], this_mod_vals))
+  }
+  
+  lyn[lyn$Classes == this_mod$Classes, ]$Class12_dist <- mydists
+
+}
+```
+
+Check descriptive averages:
+
+```{r descriptive_avgs}
+lyn %>% 
+  group_by(LargeGroup) %>% 
+  summarize(SD = sd(Class3_dist))
+lyn %>% 
+  group_by(DominantModality) %>% 
+  summarize(SD = sd(Class5_dist))
+lyn %>% 
+  group_by(Classes) %>% 
+  summarize(SD = sd(Class12_dist))
+# SD across all distances:
+sd(lyn$Class3_dist)
+sd(lyn$Class5_dist)
+sd(lyn$Class12_dist)
+```
+
+This completes the analyses presented in Chapter 13.

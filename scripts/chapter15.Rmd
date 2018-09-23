@@ -1,0 +1,450 @@
+---
+title: "Chapter 15 - Various lexical measures"
+author: "Bodo Winter"
+date: "8/26/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This is the analysis for Chapter 15, which serves two purposes. First, the senses are correlated with all kinds of linguistic variables, including frequency, semantic complexity and iconicity. This serves to show that knowing about a word's sensory modality is predictive of linguistic behavior in interesting ways. The second goal is to compare different ways of operationalizing the senses with each other, namely, the continuous modality norms, the dominant modality norms, and the cluster model. This allows investigating the extent to which the five senses folk model is a useful model for linguistic data.
+
+We begin by loading in the data and libraries.
+
+```{r packages_data, message = FALSE}
+## Libraries:
+
+library(png)		# for plotting sensory modality images
+library(car)
+library(MASS)
+library(tidyverse)
+library(stringr)
+
+## Load data:
+
+lyn <- read_csv('../processed-data/lyn_cluster.csv')
+SUBTL <- read_csv('../raw-data/frequency_SUBTLEX_POS.csv')
+icon <- read_csv('../raw-data/iconicity_ratings.csv')
+wn <- read_csv('../raw-data/wordnet_sense_count_adjective.csv')
+oed <- read_csv('../raw-data/adjectives_OED_etymologies.csv')
+
+## Load plotting functions:
+
+source('../functions/boxplot_fnc.R')
+```
+
+This time, we will use the image data (from freepix.com). So let's load in images and specify the color values.
+
+```{r image_setup}
+## Load in images:
+
+s1 <- readPNG('../figures/sight.png')
+s2 <- readPNG('../figures/touch.png')
+s3 <- readPNG('../figures/sound.png')
+s4 <- readPNG('../figures/taste.png')
+s5 <- readPNG('../figures/smell.png')
+
+## Define vector of names:
+
+sense_names <- str_c('s', 1:5)
+
+## Define colors:
+
+mycols <- c('#f37058', '#f79038', '#efbe1b',
+            '#425fac', '#30b77d')
+```
+
+## Preprocessing different datasets
+
+Compute log-transformed frequencies from SUBTLEX.
+
+```{r SUBTLEX_logs}
+SUBTL <- SUBTL %>%
+  rename(Freq = FREQcount,
+         POS = Dom_PoS_SUBTLEX) %>%
+  mutate(LogFreq = log10(Freq + 1))
+```
+
+Merge everything:
+
+```{r merge}
+## Iconicity data:
+
+lyn <- left_join(lyn,
+                 icon, by = c('Word' = 'Word'))
+
+## Frequency data:
+
+lyn <- left_join(lyn,
+                 select(SUBTL, POS, Word, Freq, LogFreq),
+                 by = c('Word' = 'Word'))
+
+## Add senses from WordNet:
+
+lyn <- left_join(lyn, wn, by = c('Word' = 'Word')) %>%
+	mutate(LogSense = log10(Sense_count + 1))
+```
+
+Check overlap between the different datasets:
+
+```{r check_overlap}
+## SUBTLEX:
+
+sum(!is.na(lyn$LogFreq))
+sum(!is.na(lyn$LogFreq)) / nrow(lyn)
+
+## WordNet:
+
+sum(!is.na(lyn$Sense_count))
+sum(!is.na(lyn$Sense_count)) / nrow(lyn)
+
+## Iconicity:
+
+sum(!is.na(lyn$Iconicity))
+sum(!is.na(lyn$Iconicity)) / nrow(lyn)
+```
+
+## Setup for plotting
+
+First, we get ordered clusters, in order of sense, then frequency:
+
+```{r clust_order}
+class_order <- lyn %>% group_by(Class, Image) %>%
+  summarize(LogFreq = mean(LogFreq, na.rm = TRUE)) %>%
+	arrange(Image, desc(LogFreq)) %>% pull(Class)
+
+image_order <- lyn %>% group_by(Class, Image) %>%
+	summarize(LogFreq = mean(LogFreq, na.rm = TRUE)) %>%
+	arrange(Image, desc(LogFreq)) %>% pull(Image)
+
+color_order <- mycols[as.numeric(as.factor(image_order))]
+```
+
+Then we put in the labels into the main data frame:
+
+```{r add_label_df}
+lyn <- mutate(lyn,
+              Clust = factor(Class, levels = class_order))
+```
+
+Next, the plotting parameters:
+
+```{r plot_pars}
+x_fac <- 0.15
+x_fac_img <- 0.3
+y_fac_img <- 0.036
+```
+
+## All boxplots
+
+This will plot all boxplots:
+
+```{r all_boxplots}
+boxplot_fnc(lyn, 'LogFreq',
+            ylims = c(0, 5),
+            ylab = 'Log10 Frequency',
+            which_x = 0, y_axis = seq(0, 5, 1),
+            hlty = 1)
+boxplot_fnc(lyn, 'LogSense',
+            ylims = c(0, 2),
+            ylab = 'Log10 Sense Count',
+            which_x = 0, y_axis = seq(0, 2, 0.5),
+            hlty = 1)
+boxplot_fnc(lyn,
+            'Iconicity', ylims = c(-2, 5),
+            ylab = 'Iconicity',
+            which_x = 0, y_axis = seq(-2, 5, 1),
+            hlty = 2)
+```
+
+## Frequency models
+
+For each of the linguistic measures, we now compare a model with the clusters, with the dominant modality classifications, and with the continuous measures.
+
+```{r freq_models}
+## Clusters:
+
+summary(freq.class <- lm(LogFreq ~ Class, lyn))
+anova(freq.class)
+
+## Dominant modality:
+
+summary(freq.mod <- lm(LogFreq ~ DominantModality, lyn))
+anova(freq.mod)
+
+aggregate(LogFreq ~ DominantModality, lyn, mean) %>%
+  mutate(LogFreq = round(LogFreq, 1))
+
+## Raw counts:
+
+aggregate(Freq ~ DominantModality, lyn, mean) %>%
+  mutate(Freq = round(Freq, 0))
+
+## Continuous predictor:
+
+summary(freq.cont <- lm(LogFreq ~ VisualStrengthMean +
+                          GustatoryStrengthMean +
+                          OlfactoryStrengthMean +
+                          HapticStrengthMean +
+                          AuditoryStrengthMean, lyn))
+summary(freq.cont2 <- lm(LogFreq ~ 1, lyn))
+
+## Overall effect:
+
+anova(freq.cont)
+anova(freq.cont2, freq.cont, test = 'F')
+
+## Variance inflation factors:
+
+vif(freq.cont)
+
+## BIC and evidence ratios:
+
+BIC(freq.class);BIC(freq.mod);BIC(freq.cont)
+```
+
+## Semantic complexity models
+
+Next, we repeat these analyses for semantic complexity.
+
+```{r sem_compl_models}
+## Cluster model, includes frequency:
+
+summary(sem.class <- lm(LogSense ~ Class + LogFreq, lyn))
+
+## Comparison of how much unique variance is due to clusters:
+
+full_rsq <- summary(sem.class)$r.squared
+full_rsq- summary(lm(LogSense ~ LogFreq, lyn))$r.squared
+full_rsq - summary(lm(LogSense ~ Class, lyn))$r.squared
+
+## Overall semantic class effect:
+
+anova(sem.class)
+
+## Dominant modality:
+
+summary(sem.mod <- lm(LogSense ~ DominantModality + LogFreq, lyn))
+full_rsq <- summary(sem.mod)$r.squared
+full_rsq - summary(lm(LogSense ~ LogFreq, lyn))$r.squared
+anova(sem.mod)
+
+## Average sense counts per dominant modality:
+
+aggregate(Sense_count ~ DominantModality, lyn, mean) %>%
+  mutate(Sense_count = round(Sense_count, 1))
+
+## Continuous model:
+
+summary(sem.cont <- lm(LogSense ~ VisualStrengthMean +
+                         GustatoryStrengthMean +
+                         OlfactoryStrengthMean +
+                         HapticStrengthMean +
+                         AuditoryStrengthMean +
+                         LogFreq, lyn))
+summary(sem.cont.null <- lm(LogSense ~ 1 + LogFreq, lyn))
+full_rsq <- summary(sem.cont)$r.squared
+full_rsq - summary(sem.cont.null)$r.squared
+anova(sem.cont.null, sem.cont, test = 'F')
+anova(sem.cont)
+
+## Check collinearity:
+
+vif(sem.cont)
+
+## BICs:
+
+BIC(sem.class);BIC(sem.mod);BIC(sem.cont)
+
+## For comparison, the model without frequency:
+
+summary(sem.cont <- lm(LogSense ~ VisualStrengthMean +
+                         GustatoryStrengthMean +
+                         OlfactoryStrengthMean +
+                         HapticStrengthMean +
+                         AuditoryStrengthMean, lyn))
+```
+
+## Iconicity models
+
+Finally, we look at a word's iconicity.
+
+```{r icon_mdl}
+## Cluster model:
+
+summary(icon.class <- lm(Iconicity ~ Class, lyn))
+anova(icon.class)
+
+## Dominant modality model:
+
+summary(icon.mod <- lm(Iconicity ~ DominantModality, lyn))
+anova(icon.mod)
+
+## Average iconicity per modality:
+
+aggregate(Iconicity ~ DominantModality, lyn, mean)
+
+## Continuous model:
+
+summary(icon.cont <- lm(Iconicity ~ VisualStrengthMean +
+                          GustatoryStrengthMean +
+                          OlfactoryStrengthMean +
+                          HapticStrengthMean +
+                          AuditoryStrengthMean, lyn))
+
+summary(icon.cont.null <- lm(Iconicity ~ 1, lyn))
+anova(icon.cont.null, icon.cont, test = 'F')
+anova(icon.cont)
+
+## Check collinearity:
+
+vif(icon.cont)
+
+## BICs:
+
+BIC(icon.class);BIC(icon.mod);BIC(icon.cont)
+```
+
+Let's look at iconicity as a function of POS (due to the proposal that verbs are more iconic, Perry et al., 2015; Winter et al., 2017). We'll do this for sound, because there's so many deverbal adjectives for this modality.
+
+```{r iconicity_POS}
+## Get auditory subset:
+
+aud <- lyn %>% filter(DominantModality == 'Auditory') %>%
+  group_by(POS)
+
+## Check:
+
+table(aud$POS)
+
+## Check all iconicity averages:
+
+aud %>% group_by(POS) %>% 
+  summarize(Iconicity = mean(Iconicity, na.rm = TRUE))
+
+## Get only verbs/adjectives:
+
+aud_verb_adj <- filter(aud,
+                       POS %in% c('Verb', 'Adjective'))
+
+## Perform a test of this:
+
+with(aud_verb_adj, t.test(Iconicity ~ POS))
+with(aud_verb_adj, wilcox.test(Iconicity ~ POS))
+
+## Triangulation, check with OED:
+
+aud <- left_join(aud, oed, by = c('Word' = 'Word'))
+
+## Check:
+
+table(aud$OED_OriginPOS)
+
+## Perform test:
+
+with(filter(aud, OED_OriginPOS %in% c('adj', 'verb')),
+     t.test(Iconicity ~ OED_OriginPOS))
+with(filter(aud, OED_OriginPOS %in% c('adj', 'verb')),
+     wilcox.test(Iconicity ~ OED_OriginPOS))
+```
+
+## Negative binomial models (sanity check)
+
+Since word frequency and number of dictionary meanings are count variables, a model with the Poisson distribution would be more appropriate. Since we can't assume that variance = mean, let's fit a negative binomial model.
+
+```{r neg_binom}
+## Frequency:
+
+summary(freq.class.nb <- glm.nb(Freq ~ Class, data = lyn))
+summary(freq.mod.nb <- glm.nb(Freq ~ DominantModality, data = lyn))
+summary(freq.cont.nb <- glm.nb(Freq ~ VisualStrengthMean +
+                                 GustatoryStrengthMean +
+                                 OlfactoryStrengthMean +
+                                 HapticStrengthMean +
+                                 AuditoryStrengthMean, data = lyn))
+
+BIC(freq.class.nb);BIC(freq.mod.nb);BIC(freq.cont.nb)
+
+## Semantic complexity:
+
+summary(sem.class.nb <- glm.nb(Sense_count ~ Class + LogFreq,
+                               data = lyn))
+summary(sem.mod.nb <- glm.nb(Sense_count ~ DominantModality + LogFreq, data = lyn))
+summary(sem.cont.nb <- glm.nb(Sense_count ~ VisualStrengthMean +
+                                GustatoryStrengthMean +
+                                OlfactoryStrengthMean +
+                                HapticStrengthMean +
+                                AuditoryStrengthMean +
+                                LogFreq,
+                              data = lyn))
+
+BIC(sem.class.nb);BIC(sem.mod.nb);BIC(sem.cont.nb)
+```
+
+
+## Assumptions
+
+Check plots of residuals against fitted values for all models:
+
+```{r assumptions, fig.width = 10, fig.height = 4}
+# Log frequency, cluster:
+
+par(mfrow = c(1, 2))
+plot(fitted(freq.class), residuals(freq.class))
+qqnorm(residuals(freq.class)); qqline(residuals(freq.class))
+
+# Log frequency, categorical:
+
+par(mfrow = c(1, 2))
+plot(fitted(freq.mod), residuals(freq.mod))
+qqnorm(residuals(freq.mod)); qqline(residuals(freq.mod))
+
+# Log frequency, continuous:
+
+par(mfrow = c(1, 2))
+plot(fitted(freq.cont), residuals(freq.cont))
+qqnorm(residuals(freq.cont)); qqline(residuals(freq.cont))
+
+# Semantic complexity, cluster:
+
+par(mfrow = c(1, 2))
+plot(fitted(sem.class), residuals(sem.class))
+qqnorm(residuals(sem.class)); qqline(residuals(sem.class))
+
+# Semantic complexity, categorical:
+
+par(mfrow = c(1, 2))
+plot(fitted(sem.mod), residuals(sem.mod))
+qqnorm(residuals(sem.mod)); qqline(residuals(sem.mod))
+
+# Semantic complexity, continuous:
+
+par(mfrow = c(1, 2))
+plot(fitted(sem.cont), residuals(sem.cont))
+qqnorm(residuals(sem.cont)); qqline(residuals(sem.cont))
+
+# Iconicity, cluster:
+
+par(mfrow = c(1, 2))
+plot(fitted(icon.class), residuals(icon.class))
+qqnorm(residuals(icon.class)); qqline(residuals(icon.class))
+
+# Iconicity, categorical:
+
+par(mfrow = c(1, 2))
+plot(fitted(icon.mod), residuals(icon.mod))
+qqnorm(residuals(icon.mod)); qqline(residuals(icon.mod))
+
+# Iconicity, continuous:
+
+par(mfrow = c(1, 2))
+plot(fitted(icon.cont), residuals(icon.cont))
+qqnorm(residuals(icon.cont)); qqline(residuals(icon.cont))
+
+```
+
+This completes the analyses presented in Chapter 15.

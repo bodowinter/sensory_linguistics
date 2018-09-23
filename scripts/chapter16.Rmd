@@ -1,0 +1,544 @@
+---
+title: "Chapter 16 - Evaluative uses"
+author: "Bodo Winter"
+date: "8/26/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This is the analysis for Chapter 16, which explores the evaluative uses of sensory words. In addition, the comparison between different sense operationalizations from Chapter 15 will be continued.
+
+We begin by loading in the data and libraries.
+
+```{r packages_data, message = FALSE}
+## Libraries:
+
+library(png)		# for plotting sensory modality images
+library(car)
+library(MASS)
+library(tidyverse)
+library(stringr)
+
+## Load data:
+
+lyn <- read_csv('../processed-data/lyn_cluster.csv')
+war <- read_csv('../raw-data/valence_warriner_2013.csv')
+snef <- read_delim('../raw-data/snefjella_kuperman_context_valence.csv',
+                   delim = ' ')
+SUBTL <- read_csv('../raw-data/frequency_SUBTLEX_POS.csv')
+
+## Load plotting functions:
+
+source('../functions/boxplot_fnc.R')
+```
+
+This time, we will use the image data (from freepix.com). So let's load in images and specify the color values.
+
+```{r image_setup}
+## Load in images:
+
+s1 <- readPNG('../figures/sight.png')
+s2 <- readPNG('../figures/touch.png')
+s3 <- readPNG('../figures/sound.png')
+s4 <- readPNG('../figures/taste.png')
+s5 <- readPNG('../figures/smell.png')
+
+## Define vector of names:
+
+sense_names <- str_c('s', 1:5)
+
+## Define colors:
+
+mycols <- c('#f37058', '#f79038', '#efbe1b',
+            '#425fac', '#30b77d')
+```
+
+First, we need to compute the absolute valence measure for the Warriner et al. (2013) and the Snefjella and Kuperman (2016) data.
+
+```{r valence_compute}
+## Compute absval for Warriner et al. (2013):
+
+war <- mutate(war,
+              Val_c = V.Mean.Sum - mean(V.Mean.Sum),
+              Val_z = Val_c / sd(Val_c),
+              AbsVal = abs(Val_z))
+
+## Compute absval for Snefjella & Kuperman (2016):
+
+snef <- mutate(snef,
+               ContextVal_c = Context_Valence - mean(Context_Valence),
+               ContextVal_z = ContextVal_c / sd(ContextVal_c),
+               ContextAbsVal = abs(ContextVal_z))
+```
+
+Merge everything:
+
+```{r merge}
+## Warriner et al. (2013):
+lyn <- left_join(lyn,
+                 select(war, Word, Val_z, AbsVal),
+                 by = c('Word' = 'Word'))
+
+## Snefjella & Kuperman (2016)
+
+lyn <- left_join(lyn,
+	select(snef, Word, ContextVal_c:ContextAbsVal),
+	by = c('Word' = 'Word'))
+```
+
+Get descriptive stats for the measures:
+
+```{r measure_descriptive}
+mean(lyn$Val_z, na.rm = TRUE)
+range(lyn$Val_z, na.rm = TRUE)
+mean(lyn$AbsVal, na.rm = TRUE)
+range(lyn$AbsVal, na.rm = TRUE)
+mean(lyn$ContextVal_z, na.rm = TRUE)
+range(lyn$ContextVal_z, na.rm = TRUE)
+mean(lyn$ContextAbsVal, na.rm = TRUE)
+range(lyn$ContextAbsVal, na.rm = TRUE)
+```
+
+Check overlap between the different datasets:
+
+```{r check_overlap}
+## Warriner et al. (2013):
+
+sum(!is.na(lyn$AbsVal))
+sum(!is.na(lyn$AbsVal)) / nrow(lyn)
+
+## Snefjella & Kuperman (2016):
+
+sum(!is.na(lyn$ContextAbsVal))
+sum(!is.na(lyn$ContextAbsVal)) / nrow(lyn)
+```
+
+Check correlation between valence and context valence.
+
+```{r val_contextval}
+# Valence:
+
+cor.test(lyn$ContextVal_z,
+         lyn$Val_z, use = 'complete.obs')
+```
+
+Biggest mismatch between context and non-context valence:
+
+```{r val_contextval_residuals}
+# Get rid of NAs:
+
+lyn_no_NA <- filter(lyn,
+                    complete.cases(ContextVal_z, Val_z))
+
+# Fit model:
+
+valcomp_mdl <- lm(ContextVal_z ~ Val_z, data = lyn_no_NA)
+
+# Extract residuals:
+
+lyn_no_NA$Res <- residuals(valcomp_mdl)
+
+# Check:
+
+arrange(lyn_no_NA, desc(Res)) %>%
+  select(Word, Val_z, ContextVal_z, Res)
+arrange(lyn_no_NA, Res) %>%
+  select(Word, Val_z, ContextVal_z, Res)
+filter(lyn_no_NA,
+       Res < 0.1,
+       Res > -0.1) %>% 
+  select(Word, Val_z, ContextVal_z, Res)
+```
+
+Compute log-transformed frequencies from SUBTLEX (necessary for ordering clusters).
+
+```{r SUBTLEX_logs}
+SUBTL <- SUBTL %>%
+  rename(Freq = FREQcount) %>%
+  mutate(LogFreq = log10(Freq + 1))
+
+## Merge this into the main data frame:
+
+lyn <- left_join(lyn,
+                 select(SUBTL, Word, Freq, LogFreq),
+                 by = c('Word' = 'Word'))
+```
+
+## Setup for plotting
+
+First, we get ordered clusters, in order of sense, then frequency:
+
+```{r clust_order}
+class_order <- lyn %>% group_by(Class, Image) %>%
+  summarize(LogFreq = mean(LogFreq, na.rm = TRUE)) %>%
+	arrange(Image, desc(LogFreq)) %>% pull(Class)
+
+image_order <- lyn %>% group_by(Class, Image) %>%
+	summarize(LogFreq = mean(LogFreq, na.rm = TRUE)) %>%
+	arrange(Image, desc(LogFreq)) %>% pull(Image)
+
+color_order <- mycols[as.numeric(as.factor(image_order))]
+```
+
+Then we put in the labels into the main data frame:
+
+```{r add_label_df}
+lyn <- mutate(lyn,
+              Clust = factor(Class, levels = class_order))
+```
+
+Next, the plotting parameters:
+
+```{r plot_pars}
+x_fac <- 0.15
+x_fac_img <- 0.3
+y_fac_img <- 0.036
+```
+
+## All boxplots
+
+This will plot all boxplots:
+
+```{r all_boxplots}
+boxplot_fnc(lyn, 'AbsVal',
+            ylims = c(0, 3),
+            ylab = 'Absolute Valence',
+            which_x = 0,
+            y_axis = seq(0, 5, 1),
+            hlty = 1)
+boxplot_fnc(lyn, 'ContextAbsVal',
+            ylims = c(0, 2.5),
+            ylab = 'Absolute Valence (Contexts)',
+            which_x = 0,
+            y_axis = seq(0, 2.5, 0.5),
+            hlty = 1)
+boxplot_fnc(lyn, 'ContextVal_z',
+            ylims = c(-2.5, 2.5),
+            ylab = 'Valence (Contexts)',
+            which_x = 0,
+            y_axis = seq(-2.5, 2.5, 0.5),
+            hlty = 2)
+```
+
+## Absolute valence (Warriner et al., 2013)
+
+For each of the emotional valence measures, we now compare a model with the clusters, with the dominant modality classifications, and with the continuous measures.
+
+```{r abs_val}
+## Clusters:
+
+summary(absval.class <- lm(AbsVal ~ Class, lyn))
+anova(absval.class)
+
+## Dominant modality:
+
+summary(absval.mod <- lm(AbsVal ~ DominantModality, lyn))
+anova(absval.mod)
+
+## Descriptive means:
+
+lyn %>% group_by(DominantModality) %>% 
+  summarize(AbsValM = mean(AbsVal, na.rm = TRUE),
+            AbsValSD = sd(AbsVal, na.rm = TRUE)) %>% 
+  mutate(AbsValM = round(AbsValM, 1),
+         AbsValSD = round(AbsValSD, 1))
+
+## Continuous model:
+
+summary(absval.cont <- lm(AbsVal ~ VisualStrengthMean +
+                            GustatoryStrengthMean +
+                            OlfactoryStrengthMean +
+                            HapticStrengthMean +
+                            AuditoryStrengthMean, lyn))
+summary(absval.cont.null <- lm(AbsVal ~ 1, lyn))
+anova(absval.cont.null, absval.cont, test = 'F')
+anova(absval.cont)
+
+## Check collinearity:
+
+vif(absval.cont)
+
+## BICs:
+
+BIC(absval.class);BIC(absval.mod);BIC(absval.cont)
+```
+
+## Context absolute valence (Snefjella & Kuperman, 2016):
+
+Next, we repeat these analyses for the context-based valence from Snefjella & Kuperman (2016):
+
+```{r context_absval}
+## Cluster model:
+
+summary(conabs.class <- lm(ContextAbsVal ~ Class, lyn))
+anova(conabs.class)
+
+## Dominant modality model:
+
+summary(conabs.mod <- lm(ContextAbsVal ~ DominantModality, lyn))
+anova(conabs.mod)
+
+## Descriptive means:
+
+lyn %>% group_by(DominantModality) %>% 
+  summarize(ContextAbsValM = mean(ContextAbsVal,
+                                 na.rm = TRUE),
+            ContextAbsValSD = sd(ContextAbsVal,
+                                   na.rm = TRUE)) %>% 
+  mutate(ContextAbsValM = round(ContextAbsValM, 1),
+         ContextAbsValSD = round(ContextAbsValSD, 1))
+
+## Continuous model:
+
+summary(conabs.cont <- lm(ContextAbsVal ~ VisualStrengthMean +
+                            GustatoryStrengthMean +
+                            OlfactoryStrengthMean +
+                            HapticStrengthMean +
+                            AuditoryStrengthMean, lyn))
+summary(conabs.cont.null <- lm(ContextAbsVal ~ 1, lyn))
+summary(conabs.cont)$r.squared
+anova(conabs.cont.null, conabs.cont, test = 'Chisq')
+anova(conabs.cont)
+
+## Collinearity:
+
+vif(conabs.cont)
+
+## BIC:
+
+BIC(conabs.class);BIC(conabs.mod);BIC(conabs.cont)
+```
+
+## Valence (positve/negative) (Warriner et al., 2013)
+
+The absolute valence measure looks at "emotionality" regardless of whether it's positive or negative.
+
+```{r pos_neg_war}
+## Cluster model:
+
+summary(val.class <- lm(Val_z ~ Class, lyn))
+anova(val.class)
+
+## Dominant modality model:
+
+summary(val.mod <- lm(Val_z ~ DominantModality, lyn))
+anova(val.mod)
+
+## Descriptive means:
+
+lyn %>% group_by(DominantModality) %>% 
+  summarize(Val_zM = mean(Val_z, na.rm = TRUE),
+            Val_zSD = sd(Val_z, na.rm = TRUE)) %>% 
+  mutate(Val_zM = round(Val_zM, 1),
+         Val_zSD = round(Val_zSD, 1))
+
+## Average valence per modality:
+
+aggregate(Val_z ~ DominantModality, lyn, mean)
+
+## Continuous model:
+
+summary(val.cont <- lm(Val_z ~ VisualStrengthMean +
+                          GustatoryStrengthMean +
+                          OlfactoryStrengthMean +
+                          HapticStrengthMean +
+                          AuditoryStrengthMean, lyn))
+
+val.cont.null <- lm(Val_z ~ 1, lyn)
+anova(val.cont.null, val.cont, test = 'F')
+anova(val.cont)
+
+## Check collinearity:
+
+vif(val.cont)
+
+## BICs:
+
+BIC(val.class);BIC(val.mod);BIC(val.cont)
+```
+
+## Context valence (positve/negative) (Snefjella & Kuperman, 2016):
+
+The absolute valence measure looks at "emotionality" regardless of whether it's positive or negative.
+
+```{r pos_neg_snef}
+## Cluster model:
+
+summary(conval.class <- lm(ContextVal_z ~ Class, lyn))
+anova(conval.class)
+
+## Dominant modality model:
+
+summary(conval.mod <- lm(ContextVal_z ~ DominantModality, lyn))
+anova(conval.mod)
+
+## Descriptive means:
+
+lyn %>% group_by(DominantModality) %>% 
+  summarize(ContextVal_zM = mean(ContextVal_z, na.rm = TRUE),
+            ContextVal_zSD = sd(ContextVal_z, na.rm = TRUE)) %>% 
+  mutate(ContextVal_zM = round(ContextVal_zM, 1),
+         ContextVal_zSD = round(ContextVal_zSD, 1))
+
+## Average valence per modality:
+
+aggregate(Val_z ~ DominantModality, lyn, mean)
+
+## Continuous model:
+
+summary(conval.cont <- lm(ContextVal_z ~ VisualStrengthMean +
+                          GustatoryStrengthMean +
+                          OlfactoryStrengthMean +
+                          HapticStrengthMean +
+                          AuditoryStrengthMean, lyn))
+
+conval.cont.null <- lm(ContextVal_z ~ 1, lyn)
+anova(conval.cont.null, conval.cont, test = 'F')
+anova(conval.cont)
+
+## Check collinearity:
+
+vif(conval.cont)
+
+## BICs:
+
+BIC(conval.class);BIC(conval.mod);BIC(conval.cont)
+```
+
+
+## Taste versus smell post-hoc comparison
+
+Taste is predicted to be more positive than smell.
+
+```{r taste_smell_posthoc}
+chemsense <- filter(lyn,
+                    DominantModality %in% c('Gustatory', 'Olfactory'))
+
+wilcox.test(Val_z ~ DominantModality,
+            data = chemsense, paired = FALSE)
+t.test(Val_z ~ DominantModality,
+       data = chemsense, paired = FALSE)
+
+wilcox.test(ContextVal_z ~ DominantModality,
+            data = chemsense, paired = FALSE)
+t.test(ContextVal_z ~ DominantModality,
+       data = chemsense, paired = FALSE)
+```
+
+## Absolute valence: chemical senses vs. rest
+
+Let's test the difference in absolute valence between the chemical senses and the rest. First, let's create a column to identify these senses.
+
+```{r assign_chems}
+chem <- c('Gustatory', 'Olfactory')
+lyn <- mutate(lyn,
+              ChemVsRest = ifelse(DominantModality %in% chem,
+                                  'chem', 'rest'))
+```
+
+Next, let's create models for this:
+
+```{r chem_vs_rest_models}
+# Create models:
+
+absval.chem <- lm(AbsVal ~ ChemVsRest, lyn)
+absval.context.chem <- lm(ContextAbsVal ~ ChemVsRest, lyn)
+
+# Check r-squared:
+
+summary(absval.chem)$r.squared
+summary(absval.context.chem)$r.squared
+
+# Check BIC:
+
+BIC(absval.chem)
+BIC(absval.context.chem)
+```
+
+
+## Assumptions
+
+Check plots of residuals against fitted values for all models:
+
+```{r assumptions, fig.width = 10, fig.height = 4}
+# Absolute valence, cluster:
+
+par(mfrow = c(1, 2))
+plot(fitted(absval.class), residuals(absval.class))
+qqnorm(residuals(absval.class)); qqline(residuals(absval.class))
+
+# Absolute valence, categorical:
+
+par(mfrow = c(1, 2))
+plot(fitted(absval.mod), residuals(absval.mod))
+qqnorm(residuals(absval.mod)); qqline(residuals(absval.mod))
+
+# Absolute valence, continuous:
+
+par(mfrow = c(1, 2))
+plot(fitted(absval.cont), residuals(absval.cont))
+qqnorm(residuals(absval.cont)); qqline(residuals(absval.cont))
+
+# Context absolute valence, cluster:
+
+par(mfrow = c(1, 2))
+plot(fitted(conabs.class), residuals(conabs.class))
+qqnorm(residuals(conabs.class)); qqline(residuals(conabs.class))
+
+# Context absolute valence, categorical:
+
+par(mfrow = c(1, 2))
+plot(fitted(conabs.mod), residuals(conabs.mod))
+qqnorm(residuals(conabs.mod)); qqline(residuals(conabs.mod))
+
+# Context absolute valence, continuous:
+
+par(mfrow = c(1, 2))
+plot(fitted(conabs.cont), residuals(conabs.cont))
+qqnorm(residuals(conabs.cont)); qqline(residuals(conabs.cont))
+
+# Valence, cluster:
+
+par(mfrow = c(1, 2))
+plot(fitted(val.class), residuals(val.class))
+qqnorm(residuals(val.class)); qqline(residuals(val.class))
+
+# Valence, categorical:
+
+par(mfrow = c(1, 2))
+plot(fitted(val.mod), residuals(val.mod))
+qqnorm(residuals(val.mod)); qqline(residuals(val.mod))
+
+# Valence, continuous:
+
+par(mfrow = c(1, 2))
+plot(fitted(val.cont), residuals(val.cont))
+qqnorm(residuals(val.cont)); qqline(residuals(val.cont))
+
+# Context valence, cluster:
+
+par(mfrow = c(1, 2))
+plot(fitted(conval.class), residuals(conval.class))
+qqnorm(residuals(conval.class)); qqline(residuals(conval.class))
+
+# Context valence, categorical:
+
+par(mfrow = c(1, 2))
+plot(fitted(conval.mod), residuals(conval.mod))
+qqnorm(residuals(conval.mod)); qqline(residuals(conval.mod))
+
+# Context valence, continuous:
+
+par(mfrow = c(1, 2))
+plot(fitted(conval.cont), residuals(conval.cont))
+qqnorm(residuals(conval.cont)); qqline(residuals(conval.cont))
+
+```
+
+
+This completes the analyses presented in Chapter 16.
