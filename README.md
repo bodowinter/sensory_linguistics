@@ -16,7 +16,7 @@ Bodo Winter
 -	MASS
 -	car
 
-Handy shorthand for installation:
+Handy shorthand for installation:<br>
 install.packages('tidyverse'); install.packages('stringr'); install.packages('diptest'); install.packages('png'); install.packages('GISTools'); install.packages('mclust'); install.packages('lme4'); install.packages('MuMIn'); install.packages('lme4'); install.packages('MASS'); install.packages('car')
 
 ## Explanation of folders:
